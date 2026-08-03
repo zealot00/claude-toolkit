@@ -1,0 +1,63 @@
+version: 2
+
+project_name: claude-toolkit
+
+before:
+  hooks:
+    - go mod tidy
+    - go test ./...
+
+builds:
+  - id: claude-toolkit
+    main: .
+    binary: claude-toolkit
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux, windows]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w
+      - -X github.com/zealot00/claude-toolkit/cmd.Version={{ .Version }}
+      - -X github.com/zealot00/claude-toolkit/cmd.Commit={{ .ShortCommit }}
+      - -X github.com/zealot00/claude-toolkit/cmd.Date={{ .Date }}
+
+archives:
+  # scripts/install.sh expects exactly claude-toolkit_<os>_<arch>.tar.gz, so
+  # this template and that script have to change together.
+  - id: default
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  footer: |
+    ## Install
+
+    ```sh
+    curl -fsSL https://raw.githubusercontent.com/zealot00/claude-toolkit/main/scripts/install.sh | bash
+    claude-toolkit init
+    claude-toolkit doctor
+    ```
+
+    Or with Go:
+
+    ```sh
+    go install github.com/zealot00/claude-toolkit@{{ .Tag }}
+    ```
