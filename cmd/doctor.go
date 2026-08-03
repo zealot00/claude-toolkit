@@ -521,3 +521,11 @@ func checkDependencies(rp *report, dir string) {
 func contains(ss []string, want string) bool {
 	return slices.Contains(ss, want)
 }
+
+// plural completes "entr" + suffix -> "entry"/"entries" in messages.
+func plural(n int) string {
+	if n == 1 {
+		return "y"
+	}
+	return "ies"
+}

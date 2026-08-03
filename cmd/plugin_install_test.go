@@ -44,11 +44,10 @@ func TestFindPluginSourceNone(t *testing.T) {
 
 func TestInstallPluginCopiesTree(t *testing.T) {
 	src := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(src, ".claude-plugin"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(src, "commands"), 0o755); err != nil {
-		t.Fatal(err)
+	for _, d := range []string{".claude-plugin", "commands", "hooks"} {
+		if err := os.MkdirAll(filepath.Join(src, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	write := func(rel, content string) {
 		t.Helper()
@@ -58,25 +57,24 @@ func TestInstallPluginCopiesTree(t *testing.T) {
 	}
 	write(".claude-plugin/plugin.json", `{"name":"claude-toolkit"}`)
 	write("commands/toolkit.md", "# toolkit command")
+	write("hooks/hooks.json", `{"PreToolUse":[]}`)
 
 	// Point the exe search at src, then install to a fake HOME.
 	oldExe := osExecutable
 	osExecutable = func() (string, error) { return filepath.Join(src, "bin", "tool"), nil }
 	defer func() { osExecutable = oldExe }()
 
-	oldHome := os.Getenv("HOME")
 	t.Setenv("HOME", t.TempDir()) // os.UserHomeDir reads $HOME on POSIX
 
 	dst, err := installPlugin(false)
 	if err != nil {
 		t.Fatalf("installPlugin: %v", err)
 	}
-	for _, rel := range []string{".claude-plugin/plugin.json", "commands/toolkit.md"} {
+	for _, rel := range []string{".claude-plugin/plugin.json", "commands/toolkit.md", "hooks/hooks.json"} {
 		if _, err := os.Stat(filepath.Join(dst, rel)); err != nil {
 			t.Errorf("missing copied file %s: %v", rel, err)
 		}
 	}
-	_ = oldHome
 }
 
 func TestModuleCacheRoot(t *testing.T) {

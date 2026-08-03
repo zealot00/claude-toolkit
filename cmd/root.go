@@ -24,12 +24,13 @@ const binName = "claude-toolkit"
 // `--event=`. The alias exists so the generated settings.json reads clearly;
 // the authoritative event always comes from the stdin payload.
 var eventAlias = map[string]string{
-	payload.EventPreToolUse:       "pre",
-	payload.EventPostToolUse:      "post",
-	payload.EventSessionStart:     "session",
-	payload.EventSessionEnd:       "session-end",
-	payload.EventUserPromptSubmit: "prompt",
-	payload.EventStop:             "stop",
+	payload.EventPreToolUse:         "pre",
+	payload.EventPostToolUse:        "post",
+	payload.EventPostToolUseFailure: "failure",
+	payload.EventSessionStart:       "session",
+	payload.EventSessionEnd:         "session-end",
+	payload.EventUserPromptSubmit:   "prompt",
+	payload.EventStop:               "stop",
 }
 
 // canonicalEvent resolves an alias or a canonical name to a canonical name.

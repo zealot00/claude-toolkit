@@ -186,3 +186,49 @@ func TestParseExitCodeVariants(t *testing.T) {
 		})
 	}
 }
+
+// TestLoopGuardFailureEvent: PostToolUseFailure is the official failure
+// signal (no exit code in tool_response needed). Three of them must block.
+func TestLoopGuardFailureEvent(t *testing.T) {
+	withIsolatedHome(t)
+	const cmd = "go test ./failing"
+
+	for i := 0; i < 3; i++ {
+		resp, err := loopGuard(context.Background(), bashEvent(payload.EventPostToolUseFailure, cmd, nil))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp != nil {
+			t.Fatalf("recording failure %d should not produce a response, got %+v", i+1, resp)
+		}
+	}
+	pre, err := loopGuard(context.Background(), bashEvent(payload.EventPreToolUse, cmd, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pre == nil || pre.HookSpecificOutput == nil || pre.HookSpecificOutput.PermissionDecision != payload.DecisionDeny {
+		t.Fatalf("3 PostToolUseFailure events must deny, got %+v", pre)
+	}
+}
+
+// TestLoopGuardFailureEventResetBySuccess: a successful PostToolUse (exit 0)
+// after failure events resets the streak.
+func TestLoopGuardFailureEventResetBySuccess(t *testing.T) {
+	withIsolatedHome(t)
+	const cmd = "make test"
+	for i := 0; i < 3; i++ {
+		if _, err := loopGuard(context.Background(), bashEvent(payload.EventPostToolUseFailure, cmd, nil)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := loopGuard(context.Background(), bashEvent(payload.EventPostToolUse, cmd, responseWithExit(0))); err != nil {
+		t.Fatal(err)
+	}
+	pre, err := loopGuard(context.Background(), bashEvent(payload.EventPreToolUse, cmd, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pre != nil {
+		t.Fatalf("success must reset the failure streak, got %+v", pre)
+	}
+}

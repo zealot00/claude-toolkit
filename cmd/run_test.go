@@ -13,26 +13,29 @@ import (
 // JSON out on stdout.
 func TestRunEndToEnd(t *testing.T) {
 	tests := []struct {
-		name       string
-		stdin      string
-		wantOutput bool
-		wantDeny   bool
+		name     string
+		stdin    string
+		wantJSON bool // output must be valid JSON (always true today)
+		wantDeny bool // output must carry a deny verdict
+		wantNoOp bool // output must be the "no opinion" empty object
 	}{
 		{
-			name:       "denies a destructive command",
-			stdin:      `{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"rm -rf /"}}`,
-			wantOutput: true,
-			wantDeny:   true,
+			name:     "denies a destructive command",
+			stdin:    `{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"rm -rf /"}}`,
+			wantJSON: true,
+			wantDeny: true,
 		},
 		{
-			name:       "stays silent on an ordinary command",
-			stdin:      `{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"go test ./..."}}`,
-			wantOutput: false,
+			name:     "stays silent on an ordinary command",
+			stdin:    `{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"go test ./..."}}`,
+			wantJSON: true,
+			wantNoOp: true,
 		},
 		{
-			name:       "ignores an event it does not handle",
-			stdin:      `{"hook_event_name":"Notification","message":"hello"}`,
-			wantOutput: false,
+			name:     "ignores an event it does not handle",
+			stdin:    `{"hook_event_name":"Notification","message":"hello"}`,
+			wantJSON: true,
+			wantNoOp: true,
 		},
 	}
 
@@ -42,9 +45,15 @@ func TestRunEndToEnd(t *testing.T) {
 			if code := run(strings.NewReader(tt.stdin), &out, "pre", "", 5*time.Second); code != 0 {
 				t.Fatalf("exit code %d; run must always exit 0", code)
 			}
-			if !tt.wantOutput {
-				if out.Len() != 0 {
-					t.Fatalf("want no output, got %s", out.String())
+			if !tt.wantJSON {
+				t.Fatal("every run must emit valid JSON today")
+			}
+			if !json.Valid(out.Bytes()) {
+				t.Fatalf("output is not valid JSON: %s", out.String())
+			}
+			if tt.wantNoOp {
+				if strings.TrimSpace(out.String()) != "{}" {
+					t.Fatalf("want the empty no-op object, got %s", out.String())
 				}
 				return
 			}
@@ -131,16 +140,16 @@ func TestRunCapFilter(t *testing.T) {
 	if code := run(strings.NewReader(stdin), &out, "pre", "format", 5*time.Second); code != 0 {
 		t.Fatalf("exit code %d for a capability that does not handle the event", code)
 	}
-	if out.Len() != 0 {
-		t.Errorf("format does not listen on PreToolUse; expected no output, got %s", out.String())
+	if strings.TrimSpace(out.String()) != "{}" {
+		t.Errorf("format does not listen on PreToolUse; expected the no-op object, got %s", out.String())
 	}
 
 	out.Reset()
 	if code := run(strings.NewReader(stdin), &out, "pre", "no-such-cap", 5*time.Second); code != 0 {
 		t.Fatalf("exit code %d for an unknown capability; must fail open", code)
 	}
-	if out.Len() != 0 {
-		t.Errorf("unknown capability should produce no output; got %s", out.String())
+	if strings.TrimSpace(out.String()) != "{}" {
+		t.Errorf("unknown capability should produce the no-op object; got %s", out.String())
 	}
 }
 
@@ -198,7 +207,7 @@ func TestBuildSpecsMatchesRoutes(t *testing.T) {
 		"format":    {"PostToolUse"},
 		"heal":      {"PostToolUse"},
 		"enrich":    {"SessionStart", "UserPromptSubmit"},
-		"loopguard": {"PreToolUse", "PostToolUse"},
+		"loopguard": {"PreToolUse", "PostToolUse", "PostToolUseFailure"},
 		"notify":    {"PreToolUse", "PostToolUse"},
 		"envfix":    {"PreToolUse"},
 	}

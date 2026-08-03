@@ -4,11 +4,19 @@ argument-hint: [list | enable <capability> | disable <capability> | enable-all |
 allowed-tools: Bash(claude-toolkit:*)
 ---
 
-# Manage claude-toolkit hooks
+# /claude-toolkit:toolkit — Manage claude-toolkit hooks
 
-The user has installed the **claude-toolkit** guardrail toolkit, which registers
-its hooks into `~/.claude/settings.json`. This command manages which of its
-capabilities are enabled or disabled.
+The user has installed the **claude-toolkit** guardrail toolkit. Its hooks may
+be registered either by the plugin itself (`hooks/hooks.json`) or by
+`claude-toolkit init` into `~/.claude/settings.json`; either way, this command
+manages which capabilities are enabled or disabled.
+
+> Namespacing: the slash command is `/claude-toolkit:toolkit`. Bare `/toolkit`
+> works only while no other plugin claims that name, so always use the
+> qualified form in scripts and documentation.
+> `allowed-tools: Bash(claude-toolkit:*)` means the Claude Code calls starting
+> with `claude-toolkit` skip the permission prompt for THIS invocation. It is
+> not a sandbox: Claude can still call any other tool it needs.
 
 ## Capabilities
 

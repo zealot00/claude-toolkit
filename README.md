@@ -91,7 +91,8 @@ take effect. Then run `claude-toolkit doctor` to verify.
 | --- | --- |
 | `--dry-run` | Print the resulting `hooks` block without writing anything |
 | `--uninstall` | Remove the toolkit's entries, leaving everything else alone |
-| `--scope user\|project\|local` | Target `~/.claude/settings.json`, `.claude/settings.json`, or `.claude/settings.local.json` (default `user`) |
+| `--scope user\|project\|local` | Write hooks into `~/.claude/settings.json` / project settings (default `user`) |
+| `--scope skills-user\|skills-project` | Install the auto-loading plugin directory instead: `~/.claude/skills/claude-toolkit/` (global) or `<dir>/.claude/skills/claude-toolkit/` (per-project, needs workspace trust) |
 | `--project-dir <path>` | Project root for `--scope=project\|local` |
 | `--abs-path` | Write this binary's absolute path instead of resolving `claude-toolkit` on `PATH` |
 | `--force` | Install even if the binary is not resolvable on `PATH` |
@@ -147,11 +148,11 @@ echo '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command"
 
 ### 4. `claude-toolkit manage`
 
-Lists, enables and disables the toolkit's hook capabilities — the interface the plugin's `/toolkit` command drives.
+Lists, enables and disables the toolkit's hook capabilities — the interface the plugin's `/toolkit` command drives. State is **global** and stored in the toolkit's private config (`~/.claude-toolkit/state/capabilities.json`), separate from Claude Code's settings.json, so `manage` works identically for both the plugin's `hooks/hooks.json` and the `init` registration path — and survives plugin uninstall/reinstall.
 
 ```
 $ claude-toolkit manage list
-claude-toolkit hooks (/Users/you/.claude/settings.json)
+claude-toolkit hooks (global state: /Users/you/.claude-toolkit/state/capabilities.json)
 
 capability  event                           matcher                           state
 enrich      SessionStart, UserPromptSubmit  *                                 enabled
@@ -190,9 +191,16 @@ Run bare (`claude-toolkit manage`) for an interactive toggle UI in the terminal.
 
 ## The Claude Code plugin
 
-A companion plugin lets you manage the toolkit without leaving Claude Code. Install it, and a `/toolkit` slash command appears; Claude then runs `claude-toolkit manage list/enable/disable` for you and shows the state right in the session.
+A companion plugin lets you manage the toolkit without leaving Claude Code. Install it, and a `/claude-toolkit:toolkit` slash command appears; Claude then runs `claude-toolkit manage list/enable/disable` for you and shows the state right in the session. Bare `/toolkit` works only while no other plugin claims the name.
 
-**Install the local plugin.** This repository *is* the plugin: `.claude-plugin/plugin.json` plus `commands/toolkit.md` at the root. In Claude Code run `/plugin` and install the local plugin at this repository's path (or, on newer builds, `claude plugin install /path/to/claude-toolkit`). The release archives bundle the same files, so you can point `/plugin` at an unpacked archive too. Restart the session, then:
+**Install the plugin** (choose one path):
+
+1. **`claude-toolkit init --scope=skills-user`** (recommended): copies the plugin into `~/.claude/skills/claude-toolkit/`, which Claude Code auto-loads for every project.
+2. **`claude-toolkit init --scope=skills-project`**: copies it into `<dir>/.claude/skills/claude-toolkit/` for one project (loads after the workspace is trusted).
+3. **`claude-toolkit init`** (default): writes hooks into `~/.claude/settings.json` and copies the plugin to `~/.claude/plugins/claude-toolkit/`.
+4. **`/plugin` in Claude Code**: point it at this repository's path (or an unpacked release archive).
+
+The plugin ships `.claude-plugin/plugin.json`, `commands/toolkit.md` and `hooks/hooks.json`. The plugin's own hooks fire once per event and their per-capability switch comes from `claude-toolkit manage` (stored in the toolkit's private config). Do **not** combine the plugin's hooks with `init`'s settings.json hooks — that would fire every event twice; `init` warns when it detects both. Restart the session, then:
 
 ```
 /toolkit
@@ -206,7 +214,7 @@ The plugin deliberately registers **no hooks of its own**. The hooks it manages 
 
 | Capability | Event | What it does |
 |---|---|---|
-| `guard` | PreToolUse | blocks destructive / exfiltrating shell commands |
+| `guard` | PreToolUse | blocks destructive / exfiltrating shell commands (covers Bash, Write, Edit, MultiEdit, NotebookEdit) |
 | `loopguard` | Pre+PostToolUse | blocks a Bash command that keeps failing (3+ consecutive) |
 | `format` | PostToolUse | runs the project formatter after Claude writes a file |
 | `heal` | PostToolUse | points Claude at `claude-toolkit test` when tests cover the file |
@@ -219,7 +227,7 @@ The plugin deliberately registers **no hooks of its own**. The hooks it manages 
 
 ### PreToolUse — guard
 
-Blocks irreversible and exfiltrating commands before Claude runs them.
+Blocks irreversible and exfiltrating commands before Claude runs them — over Bash, Write, Edit, **MultiEdit** (each edit in the batch is checked) and NotebookEdit.
 
 | Rule | Verdict | Catches |
 | --- | --- | --- |

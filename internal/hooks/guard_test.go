@@ -364,3 +364,56 @@ func TestWindowsEnvFileAsks(t *testing.T) {
 		t.Errorf("windows .env got %s, want ask", orNone(got))
 	}
 }
+
+func TestGuardMultiEdit(t *testing.T) {
+	multi := func(edits []map[string]string) string {
+		b, _ := json.Marshal(map[string]any{"edits": edits})
+		return string(b)
+	}
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"ordinary batch", multi([]map[string]string{{"file_path": "/tmp/a.go", "new_string": "x"}, {"file_path": "/tmp/b.go"}}), ""},
+		{"secret path in batch", multi([]map[string]string{{"file_path": "/Users/me/.ssh/id_rsa", "new_string": "x"}}), payload.DecisionDeny},
+		{"secret token in new_string", multi([]map[string]string{{"file_path": "/tmp/cfg", "new_string": "token=sk-QwErTyUiOpAsDfGhJkLzXcVbNm1234567890"}}), payload.DecisionDeny},
+		{"dotenv ask", multi([]map[string]string{{"file_path": "/tmp/proj/.env", "new_string": "A=1"}}), payload.DecisionAsk},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			raw := json.RawMessage(tt.in)
+			e := &payload.Event{
+				HookEventName: payload.EventPreToolUse,
+				ToolName:      "MultiEdit",
+				ToolInput:     raw,
+			}
+			resp, err := guard(context.Background(), e)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := ""
+			if resp != nil && resp.HookSpecificOutput != nil {
+				got = resp.HookSpecificOutput.PermissionDecision
+			}
+			if got != tt.want {
+				t.Errorf("MultiEdit %s: got %s, want %s", tt.name, orNone(got), orNone(tt.want))
+			}
+		})
+	}
+}
+
+func TestGuardMultiEditUnparsableFailsOpen(t *testing.T) {
+	e := &payload.Event{
+		HookEventName: payload.EventPreToolUse,
+		ToolName:      "MultiEdit",
+		ToolInput:     json.RawMessage(`"not an object"`),
+	}
+	resp, err := guard(context.Background(), e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp != nil {
+		t.Errorf("unparsable MultiEdit must be fail-open, got %+v", resp)
+	}
+}

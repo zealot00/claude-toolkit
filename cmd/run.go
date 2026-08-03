@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/zealot00/claude-toolkit/internal/capcfg"
 	"github.com/zealot00/claude-toolkit/internal/hooks"
 	"github.com/zealot00/claude-toolkit/internal/payload"
 )
@@ -62,11 +63,26 @@ func run(stdin io.Reader, stdout io.Writer, wantEvent, wantCap string, timeout t
 			debugf("run: --event=%s but payload says %s; trusting the payload", wantEvent, e.HookEventName)
 		}
 	}
-	// --cap narrows dispatch to one capability. An unknown name simply matches
-	// no route, which is a no-op rather than an error.
+	// --cap narrows dispatch to one capability; otherwise every non-disabled
+	// capability runs (the plugin's hooks/hooks.json form, which cannot carry
+	// a per-capability switch). The enabled set lives in the toolkit's private
+	// capcfg, so `manage disable` works for both registration paths.
 	var caps []string
+	disabled, _ := capcfg.Disabled()
 	if wantCap != "" {
+		if disabled[wantCap] {
+			// Disabled via manage: no opinion, but still a valid JSON doc so
+			// Claude Code does not show a spurious hook error.
+			io.WriteString(stdout, "{}\n")
+			return 0
+		}
 		caps = []string{wantCap}
+	} else if len(disabled) > 0 {
+		for _, r := range hooks.Register().Routes() {
+			if !disabled[r.Name] {
+				caps = append(caps, r.Name)
+			}
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -87,6 +103,12 @@ func run(stdin io.Reader, stdout io.Writer, wantEvent, wantCap string, timeout t
 		return 0
 	}
 	if buf.Len() == 0 {
+		// Claude Code shows a spurious "<hook> hook error" when a hook exits 0
+		// with completely empty stdout (#17088). An empty JSON object is the
+		// same "no opinion" without tripping that.
+		if _, err := stdout.Write([]byte("{}\n")); err != nil {
+			debugf("run: write stdout: %v", err)
+		}
 		return 0
 	}
 	if _, err := stdout.Write(buf.Bytes()); err != nil {

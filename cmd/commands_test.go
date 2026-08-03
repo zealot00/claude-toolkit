@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/zealot00/claude-toolkit/pkg/installer"
 )
 
 func TestCompareVersions(t *testing.T) {
@@ -93,7 +95,7 @@ func TestUninstallCmdRemovesHooks(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	plan, err := capabilityPlan(path, "claude-toolkit", map[string]bool{"guard": true, "format": true, "enrich": true})
+	plan, err := installer.BuildPlan(path, buildSpecs("claude-toolkit"))
 	if err != nil {
 		t.Fatal(err)
 	}

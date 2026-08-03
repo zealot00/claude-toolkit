@@ -92,6 +92,19 @@ type FileInput struct {
 	NewString    string `json:"new_string"`
 }
 
+// MultiEditInput is the tool_input shape for MultiEdit: a batch of edits
+// across possibly several files.
+type MultiEditInput struct {
+	Edits []FileEdit `json:"edits"`
+}
+
+// FileEdit is one edit inside a MultiEdit call.
+type FileEdit struct {
+	FilePath  string `json:"file_path"`
+	OldString string `json:"old_string"`
+	NewString string `json:"new_string"`
+}
+
 // Path returns whichever path field the tool populated.
 func (f FileInput) Path() string {
 	if f.FilePath != "" {

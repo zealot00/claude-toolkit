@@ -2,6 +2,7 @@ package hooks
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"os"
@@ -28,7 +29,7 @@ func Guard() *dispatcher.Route {
 	return &dispatcher.Route{
 		Name:    "guard",
 		Events:  []string{payload.EventPreToolUse},
-		Tools:   []string{"Bash", "Write", "Edit", "NotebookEdit"},
+		Tools:   []string{"Bash", "Write", "Edit", "MultiEdit", "NotebookEdit"},
 		Handler: guard,
 	}
 }
@@ -46,6 +47,9 @@ func guard(ctx context.Context, e *payload.Event) (*payload.Response, error) {
 		}
 		return decide(fs), nil
 	}
+	if e.ToolName == "MultiEdit" {
+		return decide(checkMultiEdit(e)), nil
+	}
 	in, err := e.File()
 	if err != nil {
 		return nil, err
@@ -58,6 +62,27 @@ func guard(ctx context.Context, e *payload.Event) (*payload.Response, error) {
 		fs = append(fs, checkContent(in.NewString)...)
 	}
 	return decide(fs), nil
+}
+
+// checkMultiEdit guards every edit in a MultiEdit batch: each target path
+// and each new_string goes through the same rules as Write/Edit. An
+// unparseable tool_input is fail-open (no opinion).
+func checkMultiEdit(e *payload.Event) []finding {
+	var in payload.MultiEditInput
+	if len(e.ToolInput) == 0 {
+		return nil
+	}
+	if err := json.Unmarshal(e.ToolInput, &in); err != nil {
+		return nil
+	}
+	var fs []finding
+	for _, ed := range in.Edits {
+		fs = append(fs, checkPath(ed.FilePath)...)
+		if ed.NewString != "" {
+			fs = append(fs, checkContent(ed.NewString)...)
+		}
+	}
+	return fs
 }
 
 // finding is one rule match.

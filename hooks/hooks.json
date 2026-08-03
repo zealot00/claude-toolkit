@@ -1,0 +1,42 @@
+{
+  "PreToolUse": [
+    {
+      "matcher": "^(Bash|Write|Edit|MultiEdit|NotebookEdit)$",
+      "hooks": [
+        { "type": "command", "command": "claude-toolkit run --event=pre", "timeout": 10 }
+      ]
+    }
+  ],
+  "PostToolUse": [
+    {
+      "matcher": "^(Write|Edit|NotebookEdit)$",
+      "hooks": [
+        { "type": "command", "command": "claude-toolkit run --event=post", "timeout": 30 }
+      ]
+    }
+  ],
+  "PostToolUseFailure": [
+    {
+      "matcher": "^(Bash)$",
+      "hooks": [
+        { "type": "command", "command": "claude-toolkit run --event=failure", "timeout": 30 }
+      ]
+    }
+  ],
+  "SessionStart": [
+    {
+      "matcher": "*",
+      "hooks": [
+        { "type": "command", "command": "claude-toolkit run --event=session", "timeout": 15 }
+      ]
+    }
+  ],
+  "UserPromptSubmit": [
+    {
+      "matcher": "*",
+      "hooks": [
+        { "type": "command", "command": "claude-toolkit run --event=prompt", "timeout": 5 }
+      ]
+    }
+  ]
+}

@@ -35,6 +35,9 @@ func installPlugin(dryRun bool) (string, error) {
 	if err := copyDir(filepath.Join(src, "commands"), filepath.Join(dst, "commands")); err != nil {
 		return "", fmt.Errorf("copy commands: %w", err)
 	}
+	if err := copyDir(filepath.Join(src, "hooks"), filepath.Join(dst, "hooks")); err != nil {
+		return "", fmt.Errorf("copy hooks: %w", err)
+	}
 	return dst, nil
 }
 
@@ -110,4 +113,64 @@ func copyDir(src, dst string) error {
 		}
 		return os.WriteFile(target, data, 0o644)
 	})
+}
+
+// pluginHooksInstalled reports whether the Claude Code plugin's own
+// hooks/hooks.json is present (copied by init or installed by the user).
+// Writing the same hooks into settings.json as well would fire every event
+// twice, so init warns about it.
+func pluginHooksInstalled() bool {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	for _, p := range []string{
+		filepath.Join(home, ".claude", "plugins", "claude-toolkit", "hooks", "hooks.json"),
+		filepath.Join(home, ".claude", "skills", "claude-toolkit", "hooks", "hooks.json"),
+	} {
+		if _, err := os.Stat(p); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// initSkillsScope installs the plugin into a skills-directory location, which
+// Claude Code auto-loads: skills-user is global (~/.claude/skills/
+// claude-toolkit/), skills-project is per-project (<dir>/.claude/skills/
+// claude-toolkit/, requires workspace trust).
+func initSkillsScope(scope, projectDir string, dryRun bool) int {
+	src, err := findPluginSource()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	var dst string
+	if scope == "skills-user" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		dst = filepath.Join(home, ".claude", "skills", "claude-toolkit")
+	} else {
+		dst = filepath.Join(projectDir, ".claude", "skills", "claude-toolkit")
+	}
+
+	fmt.Printf("Installing the claude-toolkit plugin (skills scope) into %s\n\n", dst)
+	if dryRun {
+		fmt.Println("(dry run -- nothing written)")
+		return 0
+	}
+	for _, dir := range []string{".claude-plugin", "commands", "hooks"} {
+		if err := copyDir(filepath.Join(src, dir), filepath.Join(dst, dir)); err != nil {
+			fmt.Fprintf(os.Stderr, "error: copy %s: %v\n", dir, err)
+			return 1
+		}
+	}
+	fmt.Println("Installed. Restart Claude Code for the /toolkit command and plugin hooks to load.")
+	if scope == "skills-project" {
+		fmt.Println("Note: project-scope plugins load only after the workspace is trusted.")
+	}
+	return 0
 }

@@ -3,9 +3,9 @@ package cmd
 import (
 	"sort"
 
+	"github.com/zealot00/claude-toolkit/internal/capcfg"
 	"github.com/zealot00/claude-toolkit/internal/dispatcher"
 	"github.com/zealot00/claude-toolkit/internal/hooks"
-	"github.com/zealot00/claude-toolkit/pkg/installer"
 )
 
 // capability describes one registered capability for the management UI. A
@@ -42,38 +42,22 @@ func registeredCapabilities() []capability {
 	return out
 }
 
-// enabledCapabilities reports which capability names are currently installed
-// in the given settings file, per installer.Inspect. A legacy entry without a
-// --cap flag contributes nothing; manage refuses to write while any exist
-// rather than silently stripping them (see legacyCapabilities).
-func enabledCapabilities(path string) (map[string]bool, error) {
-	entries, err := installer.Inspect(path)
+// enabledCapabilities reports each capability's effective state: an explicit
+// false in capcfg disables it; missing or true enables it (the fail-open
+// default). This keeps `manage list` consistent with what the hook runtime
+// actually runs.
+func enabledCapabilities() (map[string]bool, error) {
+	cfg, err := capcfg.Load()
 	if err != nil {
 		return nil, err
 	}
-	enabled := map[string]bool{}
-	for _, e := range entries {
-		if e.Capability != "" {
-			enabled[e.Capability] = true
+	out := map[string]bool{}
+	for _, c := range registeredCapabilities() {
+		on := true
+		if v, ok := cfg.Enabled[c.name]; ok {
+			on = v
 		}
+		out[c.name] = on
 	}
-	return enabled, nil
-}
-
-// legacyCapabilities counts installed entries that predate capability tags
-// (commands without --cap=). manage cannot attribute them to a capability, so
-// any write would strip them and re-add only what was requested; refusing
-// until the user runs `init` (which migrates) is the safe move.
-func legacyCapabilities(path string) (int, error) {
-	entries, err := installer.Inspect(path)
-	if err != nil {
-		return 0, err
-	}
-	n := 0
-	for _, e := range entries {
-		if e.Capability == "" {
-			n++
-		}
-	}
-	return n, nil
+	return out, nil
 }

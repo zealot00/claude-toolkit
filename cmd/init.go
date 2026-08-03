@@ -16,10 +16,11 @@ import (
 // and must stay imperceptible; PostToolUse may shell out to a formatter on a
 // cold cache and needs room.
 var hookTimeouts = map[string]int{
-	payload.EventPreToolUse:       10,
-	payload.EventPostToolUse:      30,
-	payload.EventSessionStart:     15,
-	payload.EventUserPromptSubmit: 5,
+	payload.EventPreToolUse:         10,
+	payload.EventPostToolUse:        30,
+	payload.EventPostToolUseFailure: 30,
+	payload.EventSessionStart:       15,
+	payload.EventUserPromptSubmit:   5,
 }
 
 // buildSpecs derives the settings.json entries from the routes the binary
@@ -67,10 +68,11 @@ func shellQuote(p string) string {
 func initCmd(args []string) int {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	dryRun := fs.Bool("dry-run", false, "show what would change without writing anything")
-	scope := fs.String("scope", string(installer.ScopeUser), "which settings file to write: user, project or local")
+	scope := fs.String("scope", string(installer.ScopeUser), "target: user|project|local (settings.json) or skills-user|skills-project (auto-loading plugin directory)")
 	projectDir := fs.String("project-dir", "", "project root for --scope=project|local (default: current directory)")
 	uninstall := fs.Bool("uninstall", false, "remove the toolkit's hooks instead of installing them")
-	absPath := fs.Bool("abs-path", false, "pin the absolute path of this binary instead of resolving claude-toolkit on PATH")
+	absPath := fs.Bool("abs-path", false, "pin the absolute path of this binary (now the default; kept for compatibility)")
+	noAbsPath := fs.Bool("no-abs-path", false, "resolve the command on PATH instead of pinning this binary's absolute path")
 	force := fs.Bool("force", false, "install even if the binary cannot be resolved on PATH")
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s init [flags]\n\n"+
@@ -81,6 +83,7 @@ func initCmd(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+	_ = *absPath // kept for compatibility: pinning the absolute path is the default now
 
 	dir := *projectDir
 	if dir == "" {
@@ -92,6 +95,12 @@ func initCmd(args []string) int {
 		dir = cwd
 	}
 
+	// skills-* scopes install the auto-loading plugin directory instead of
+	// touching settings.json.
+	if *scope == "skills-user" || *scope == "skills-project" {
+		return initSkillsScope(*scope, dir, *dryRun)
+	}
+
 	path, err := installer.Path(installer.Scope(*scope), dir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -100,7 +109,7 @@ func initCmd(args []string) int {
 
 	var specs []installer.Spec
 	if !*uninstall {
-		command, err := resolveCommand(*absPath, *force)
+		command, err := resolveCommand(*noAbsPath, *force)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "%v\n", err)
 			return 1
@@ -145,6 +154,12 @@ func initCmd(args []string) int {
 	}
 	fmt.Printf("Wrote %s\n", plan.Path)
 
+	if pluginHooksInstalled() {
+		fmt.Fprintf(os.Stderr, "note: the Claude Code plugin's hooks/hooks.json is present, and `init` is also\n"+
+			"      writing hooks to settings.json -- that would fire every event twice.\n"+
+			"      Use one registration path: uninstall the plugin's hooks, or skip `init`.\n")
+	}
+
 	// The plugin is a convenience, not a requirement: `init` works without it,
 	// so a failed copy is a note, not an error.
 	if dst, err := installPlugin(false); err == nil {
@@ -160,13 +175,13 @@ func initCmd(args []string) int {
 
 // resolveCommand decides what command string goes into settings.json.
 //
-// The default is a bare PATH lookup, which is what makes the config portable
-// across machines. That only works if Claude Code's environment can actually
-// find the binary -- and on macOS a GUI-launched app does not inherit the PATH
-// from a shell profile, so `~/go/bin` is frequently missing. Discovering that
-// at install time is cheap; discovering it later means hooks that silently
-// never fire.
-func resolveCommand(absPath, force bool) (string, error) {
+// The default pins this binary's absolute path: on macOS a GUI-launched
+// Claude Code does not inherit the PATH from a shell profile, so a bare
+// PATH lookup would silently disable every hook. The absolute path is stable
+// for go install and install.sh layouts. --no-abs-path (usePATH) opts back
+// into a bare PATH lookup, which is portable across machines at the cost of
+// breaking on GUI-launched sessions.
+func resolveCommand(usePATH, force bool) (string, error) {
 	self, err := os.Executable()
 	if err == nil {
 		if resolved, rerr := filepath.EvalSymlinks(self); rerr == nil {
@@ -174,11 +189,12 @@ func resolveCommand(absPath, force bool) (string, error) {
 		}
 	}
 
-	if absPath {
-		if self == "" {
-			return "", fmt.Errorf("error: --abs-path requested but this binary's own path could not be determined")
+	if !usePATH {
+		if self != "" {
+			return shellQuote(self), nil
 		}
-		return shellQuote(self), nil
+		// Could not determine our own path; fall through to PATH lookup.
+		usePATH = true
 	}
 
 	found, lookErr := exec.LookPath(binName)
@@ -188,9 +204,8 @@ func resolveCommand(absPath, force bool) (string, error) {
 
 Pick one:
   - Add the install directory to PATH (for go install, that is %s), then re-run.
-  - Or run "%s init --abs-path" to hard-code this binary's location instead.
-  - Or run "%s init --force" to write the config anyway.`,
-				binName, goBinDir(), binName, binName)
+  - Or run "%s init --no-abs-path" to skip this check and write the config anyway.`,
+				binName, goBinDir(), binName)
 		}
 		fmt.Fprintf(os.Stderr, "warning: %q is not on PATH; the hooks will not fire until it is\n\n", binName)
 		return binName, nil

@@ -17,17 +17,19 @@ import (
 // a doomed retry.
 //
 // Failure can only be known after a command runs, so this route listens on
-// both events: PostToolUse records the exit status into a state file, and
-// PreToolUse looks the command up before it runs. A command that has failed
-// three times in a row is denied with a diagnostic; any successful run (or a
-// different command) resets the count.
+// both sides: PostToolUse records an exit status when the response carries one
+// (exit_code / exitCode / interrupted), PostToolUseFailure records the
+// failure the official way (it is the event Claude Code fires for non-zero
+// exits), and PreToolUse looks the command up before it runs. A command that
+// has failed three times in a row is denied with a diagnostic; any successful
+// run (or a different command) resets the count.
 //
 // The state file lives in the toolkit's private state dir (0700), not /tmp,
 // which is world-writable and shared across users.
 func LoopGuard() *dispatcher.Route {
 	return &dispatcher.Route{
 		Name:    "loopguard",
-		Events:  []string{payload.EventPreToolUse, payload.EventPostToolUse},
+		Events:  []string{payload.EventPreToolUse, payload.EventPostToolUse, payload.EventPostToolUseFailure},
 		Tools:   []string{"Bash"},
 		Handler: loopGuard,
 	}
@@ -81,6 +83,17 @@ func loopGuard(_ context.Context, e *payload.Event) (*payload.Response, error) {
 			entry.Fails++
 		}
 		entry.Exit = exit
+		st.Commands[in.Command] = entry
+		saveLoopState(path, st)
+		return nil, nil
+
+	case payload.EventPostToolUseFailure:
+		// The official failure signal: no exit code parsing needed, the event
+		// itself means the command did not succeed.
+		st := loadLoopState(path)
+		entry := st.Commands[in.Command]
+		entry.Fails++
+		entry.Exit = 1
 		st.Commands[in.Command] = entry
 		saveLoopState(path, st)
 		return nil, nil
