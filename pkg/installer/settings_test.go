@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -285,7 +286,9 @@ func TestCreatesMissingFile(t *testing.T) {
 		t.Fatalf("file was not created: %v", err)
 	}
 	// A file we create will hold an API token; it must not be world-readable.
-	if mode := info.Mode().Perm(); mode != 0o600 {
+	// Windows has no POSIX permission bits; the 0600 contract is enforced by
+	// the code path that creates the file and is asserted on POSIX only.
+	if mode := info.Mode().Perm(); runtime.GOOS != "windows" && mode != 0o600 {
 		t.Errorf("new settings file mode is %#o, want 0600", mode)
 	}
 	got := readJSON(t, path)
@@ -314,6 +317,9 @@ func TestBacksUpBeforeWriting(t *testing.T) {
 // TestPreservesFileMode checks we do not silently loosen or tighten perms on
 // a file the user already configured.
 func TestPreservesFileMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no POSIX permission semantics")
+	}
 	path := writeTemp(t, realWorldSettings)
 	if err := os.Chmod(path, 0o600); err != nil {
 		t.Fatal(err)

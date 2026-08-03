@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/zealot00/claude-toolkit/internal/payload"
@@ -141,6 +142,9 @@ func TestLoopGuardMissingExitCodeDoesNotRecord(t *testing.T) {
 }
 
 func TestLoopGuardStateFileMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no POSIX permission semantics")
+	}
 	withIsolatedHome(t)
 	if _, err := loopGuard(context.Background(), bashEvent(payload.EventPostToolUse, "cmd x", responseWithExit(1))); err != nil {
 		t.Fatal(err)

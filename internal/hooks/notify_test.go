@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -100,6 +101,9 @@ func TestNotifyFiresOnFailure(t *testing.T) {
 }
 
 func TestNotifyStateMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no POSIX permission semantics")
+	}
 	withIsolatedHome(t)
 	t.Setenv("CLAUDE_TOOLKIT_NOTIFY", "60")
 	if _, err := notifier(context.Background(), bashEvent(payload.EventPreToolUse, "x", nil)); err != nil {

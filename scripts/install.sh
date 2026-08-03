@@ -12,7 +12,7 @@
 #                            (.claude-plugin/ + commands/) into this directory
 #
 # This script downloads a release binary and verifies its SHA-256 against the
-# published checksums file. It deliberately does NOT run `claude-toolkit init`
+# published checksums file. It deliberately does NOT run 'claude-toolkit init'
 # for you: init edits ~/.claude/settings.json, and a script piped from the
 # internet should not silently modify your configuration. Run it yourself.
 # For the same reason, the Claude Code plugin is only copied when
@@ -191,7 +191,7 @@ set to a directory you want it copied into.
 
 External tools (git, formatters like gofmt/ruff/prettier) are optional: the
 binary itself is a zero-dependency static Go build, and each hook degrades to
-a silent no-op when a tool is missing. Run `$BIN doctor` to see which are
+a silent no-op when a tool is missing. Run $BIN doctor to see which are
 present.
 
 EOF
