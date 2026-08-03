@@ -170,7 +170,7 @@ func manageList(path string) int {
 			state = "enabled"
 			enabledCount++
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", c.name, c.event, c.matcher, state)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", c.name, strings.Join(c.events, ", "), c.matcher, state)
 	}
 	w.Flush()
 	fmt.Printf("\n%d capability(ies), %d enabled, %d disabled.\n", len(caps), enabledCount, len(caps)-enabledCount)
@@ -299,7 +299,7 @@ func manageTUI(path string, f manageFlags) int {
 			if enabled[c.name] {
 				state = "enabled"
 			}
-			fmt.Printf("  [%d] %-8s %-12s %s\n", i+1, c.name, c.event, state)
+			fmt.Printf("  [%d] %-8s %-16s %s\n", i+1, c.name, strings.Join(c.events, ", "), state)
 		}
 		fmt.Printf("\n  1-%d: toggle   a: enable all   n: disable all   q: quit\n> ", len(caps))
 

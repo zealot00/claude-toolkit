@@ -175,12 +175,12 @@ cmd/
 
 ### 阶段 6：分发与跨平台（1 周）—— *上线硬要求*
 
-- [ ] **Windows 端到端 CI**
+- [x] **Windows 端到端 CI**
   - 当前 CI matrix 有 windows 但无 e2e
-  - 加 job：`install.ps1` → `init` → `doctor` → `uninstall`
-- [ ] **`install.ps1`**（或在 README 中给 `irm | iex` 一行命令）
-- [ ] **Homebrew tap**（`brew install zealot00/tap/claude-toolkit`）
-- [ ] **Scoop manifest**
+  - 已加 job：`windows-e2e`（PowerShell 语法检查 + `init` → `manage` → `doctor` → `uninstall` 冒烟）
+- [x] **`install.ps1`**（`irm | iex` 一行命令，SHA-256 校验 + `CLAUDE_TOOLKIT_PLUGIN_DIR` opt-in）
+- [x] **Homebrew tap**（模板在 `packaging/homebrew/claude-toolkit.rb`，SHA256 待 release 填充）
+- [x] **Scoop manifest**（模板在 `packaging/scoop/claude-toolkit.json`，含 `checkver`/`autoupdate`）
 
 ---
 

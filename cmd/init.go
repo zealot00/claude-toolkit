@@ -24,31 +24,33 @@ var hookTimeouts = map[string]int{
 
 // buildSpecs derives the settings.json entries from the routes the binary
 // actually registers, so the two can never disagree. caps restricts which
-// capabilities get an entry; empty installs every capability. Each capability
-// becomes its own matcher group whose command names it via --cap, which is
-// what lets `manage disable <cap>` remove one capability without touching its
-// siblings on the same event.
+// capabilities get an entry; empty installs every capability. Each
+// capability gets one matcher group PER EVENT it listens on, each carrying
+// --cap=<name> and --event=<alias>, so disabling one capability removes all
+// of its groups without touching sibling capabilities on the same event.
 func buildSpecs(command string, caps ...string) []installer.Spec {
 	requested := map[string]bool{}
 	for _, c := range caps {
 		requested[c] = true
 	}
-	specs := make([]installer.Spec, 0, len(registeredCapabilities()))
+	var specs []installer.Spec
 	for _, cap := range registeredCapabilities() {
 		if len(caps) > 0 && !requested[cap.name] {
 			continue
 		}
-		alias, ok := eventAlias[cap.event]
-		if !ok {
-			alias = cap.event
+		for _, ev := range cap.events {
+			alias, ok := eventAlias[ev]
+			if !ok {
+				alias = ev
+			}
+			specs = append(specs, installer.Spec{
+				Event:      ev,
+				Capability: cap.name,
+				Matcher:    cap.matcher,
+				Command:    fmt.Sprintf("%s run --event=%s --cap=%s", command, alias, cap.name),
+				Timeout:    hookTimeouts[ev],
+			})
 		}
-		specs = append(specs, installer.Spec{
-			Event:      cap.event,
-			Capability: cap.name,
-			Matcher:    cap.matcher,
-			Command:    fmt.Sprintf("%s run --event=%s --cap=%s", command, alias, cap.name),
-			Timeout:    hookTimeouts[cap.event],
-		})
 	}
 	return specs
 }

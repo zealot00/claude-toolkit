@@ -170,7 +170,7 @@ func TestBuildSpecsMatchesRoutes(t *testing.T) {
 	if len(specs) == 0 {
 		t.Fatal("no specs generated")
 	}
-	seen := map[string]bool{}
+	seen := map[string]string{} // capability -> events covered
 	for _, s := range specs {
 		if s.Matcher == "" {
 			t.Errorf("%s has an empty matcher", s.Event)
@@ -178,16 +178,46 @@ func TestBuildSpecsMatchesRoutes(t *testing.T) {
 		if s.Capability == "" {
 			t.Errorf("%s spec carries no capability name", s.Event)
 		}
-		if seen[s.Capability] {
-			t.Errorf("capability %q generated more than one spec", s.Capability)
+		if prev, dup := seen[s.Capability]; dup && prev == s.Event {
+			t.Errorf("capability %q generated two specs for the same event %s", s.Capability, s.Event)
 		}
-		seen[s.Capability] = true
+		seen[s.Capability] = s.Event
 		want := fmt.Sprintf("claude-toolkit run --event=%s --cap=%s", eventAlias[s.Event], s.Capability)
 		if s.Command != want {
 			t.Errorf("%s command is malformed: %q, want %q", s.Capability, s.Command, want)
 		}
 		if s.Timeout <= 0 {
 			t.Errorf("%s has no timeout; a hung hook would stall the session", s.Event)
+		}
+	}
+
+	// Every registered capability appears, and multi-event capabilities get a
+	// group per event (this is what the review flagged as a blocking bug).
+	wantEvents := map[string][]string{
+		"guard":     {"PreToolUse"},
+		"format":    {"PostToolUse"},
+		"heal":      {"PostToolUse"},
+		"enrich":    {"SessionStart", "UserPromptSubmit"},
+		"loopguard": {"PreToolUse", "PostToolUse"},
+		"notify":    {"PreToolUse", "PostToolUse"},
+	}
+	covered := map[string][]string{}
+	for _, s := range specs {
+		covered[s.Capability] = append(covered[s.Capability], s.Event)
+	}
+	if len(covered) != len(wantEvents) {
+		t.Fatalf("capabilities generated = %v, want %v", covered, wantEvents)
+	}
+	for cap, want := range wantEvents {
+		got := covered[cap]
+		if len(got) != len(want) {
+			t.Errorf("%s events = %v, want %v (multi-event registration missing)", cap, got, want)
+			continue
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("%s events = %v, want %v", cap, got, want)
+			}
 		}
 	}
 

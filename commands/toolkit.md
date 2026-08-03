@@ -12,14 +12,17 @@ capabilities are enabled or disabled.
 
 ## Capabilities
 
-The toolkit ships the following hook capabilities (each one listens on one
-event):
+The toolkit ships the following hook capabilities (each may listen on one or
+more events; each has its own `manage` switch):
 
-| Capability | Event       | What it does |
-|-----------|-------------|--------------|
-| `guard`   | PreToolUse  | Blocks destructive / exfiltrating shell commands before they run |
-| `format`  | PostToolUse | Runs the project formatter after Claude writes a file |
-| `enrich`  | SessionStart| Injects git branch / working-tree state at session start |
+| Capability | Event(s) | What it does |
+|-----------|-----------|--------------|
+| `guard` | PreToolUse | Blocks destructive / exfiltrating shell commands before they run |
+| `loopguard` | PreToolUse + PostToolUse | Blocks a Bash command that keeps failing (3+ consecutive) |
+| `format` | PostToolUse | Runs the project formatter after Claude writes a file |
+| `heal` | PostToolUse | Points Claude at `claude-toolkit test <file>` when tests cover it |
+| `enrich` | SessionStart, UserPromptSubmit | Injects git / toolchain / working-tree state |
+| `notify` | PreToolUse + PostToolUse | Desktop notification for slow or failed calls (opt-in via `CLAUDE_TOOLKIT_NOTIFY`) |
 
 ## What to do
 

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/zealot00/claude-toolkit/internal/dispatcher"
@@ -58,11 +59,15 @@ var notifySend = func(title, message string) {
 	case "linux":
 		_ = exec.Command("notify-send", title, msg).Run()
 	}
-	// Terminal bell, portable everywhere.
-	fmt.Print("\a")
+	// Terminal bell on stderr: hook stdout must stay pure JSON.
+	fmt.Fprint(os.Stderr, "\a")
 }
 
+// quoteApple escapes a string for embedding in an AppleScript string literal.
+// Dynamic content (tool names, durations) must never break out of the quotes.
 func quoteApple(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
 	return `"` + s + `"`
 }
 

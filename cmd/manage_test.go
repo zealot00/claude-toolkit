@@ -24,25 +24,26 @@ func TestManageRoundTrip(t *testing.T) {
 		}
 	}
 
-	all := map[string]bool{"guard": true, "format": true, "enrich": true}
+	all := map[string]bool{"guard": true, "format": true, "enrich": true, "heal": true, "loopguard": true, "notify": true}
 	apply(all)
 
 	entries, err := installer.Inspect(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 3 {
-		t.Fatalf("want 3 installed capabilities after full install, got %d: %+v", len(entries), entries)
+	// 9 matcher groups: guard1 + format1 + heal1 + enrich2 + loopguard2 + notify2.
+	if len(entries) != 9 {
+		t.Fatalf("want 9 matcher groups after full install, got %d: %+v", len(entries), entries)
 	}
 
-	// Disable guard: its matcher group must disappear, siblings stay.
-	apply(map[string]bool{"format": true, "enrich": true})
+	// Disable guard: its groups must disappear, siblings stay.
+	apply(map[string]bool{"format": true, "enrich": true, "heal": true, "loopguard": true, "notify": true})
 	entries, err = installer.Inspect(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 2 {
-		t.Fatalf("want 2 entries after disabling guard, got %d: %+v", len(entries), entries)
+	if len(entries) != 8 {
+		t.Fatalf("want 8 entries after disabling guard, got %d: %+v", len(entries), entries)
 	}
 	for _, e := range entries {
 		if e.Capability == "guard" {
@@ -59,8 +60,8 @@ func TestManageRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 3 {
-		t.Fatalf("want 3 entries after re-enabling guard, got %d", len(entries))
+	if len(entries) != 9 {
+		t.Fatalf("want 9 entries after re-enabling guard, got %d", len(entries))
 	}
 }
 
@@ -68,7 +69,7 @@ func TestManageRoundTrip(t *testing.T) {
 // an unmodified plan, or re-running `manage` would churn the settings file.
 func TestCapabilityPlanNoopWhenUnchanged(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
-	all := map[string]bool{"guard": true, "format": true, "enrich": true}
+	all := map[string]bool{"guard": true, "format": true, "enrich": true, "heal": true, "loopguard": true, "notify": true}
 
 	plan, err := capabilityPlan(path, "claude-toolkit", all)
 	if err != nil {
@@ -195,7 +196,7 @@ func TestEnabledKeysPinsDisabledSemantics(t *testing.T) {
 // (both true and false values), matching what the CLI builds after toggling.
 func TestManageDisableRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "settings.json")
-	plan, err := capabilityPlan(path, "claude-toolkit", map[string]bool{"guard": true, "format": true, "enrich": true})
+	plan, err := capabilityPlan(path, "claude-toolkit", map[string]bool{"guard": true, "format": true, "enrich": true, "heal": true, "loopguard": true, "notify": true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,8 +225,8 @@ func TestManageDisableRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 2 {
-		t.Fatalf("want 2 entries after disabling format, got %d: %+v", len(entries), entries)
+	if len(entries) != 8 {
+		t.Fatalf("want 8 entries after disabling format, got %d: %+v", len(entries), entries)
 	}
 	for _, e := range entries {
 		if e.Capability == "format" {

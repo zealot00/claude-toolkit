@@ -10,12 +10,13 @@ import (
 
 // capability describes one registered capability for the management UI. A
 // capability ("guard", "format", "enrich") is one dispatcher.Route Name; it
-// may listen on several events, and the first event is authoritative for
-// management purposes.
+// may listen on several events (loopguard records on PostToolUse and blocks
+// on PreToolUse), and EVERY event needs its own settings.json matcher group,
+// otherwise that half of the capability never fires.
 type capability struct {
-	name    string // e.g. "guard"
-	event   string // the hook event it listens on, e.g. "PreToolUse"
-	matcher string // settings.json matcher covering its tools
+	name    string   // e.g. "guard"
+	events  []string // all hook events this capability listens on
+	matcher string   // settings.json matcher covering its tools (same for all events)
 }
 
 // registeredCapabilities returns the toolkit's capabilities, one per route
@@ -36,7 +37,7 @@ func registeredCapabilities() []capability {
 	out := make([]capability, 0, len(names))
 	for _, n := range names {
 		r := byName[n]
-		out = append(out, capability{name: r.Name, event: r.Events[0], matcher: r.Matcher()})
+		out = append(out, capability{name: r.Name, events: r.Events, matcher: r.Matcher()})
 	}
 	return out
 }

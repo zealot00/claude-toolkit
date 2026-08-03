@@ -153,12 +153,15 @@ Lists, enables and disables the toolkit's hook capabilities — the interface th
 $ claude-toolkit manage list
 claude-toolkit hooks (/Users/you/.claude/settings.json)
 
-capability  event         matcher                           state
-enrich      SessionStart  *                                 disabled
-format      PostToolUse   ^(Write|Edit|NotebookEdit)$       disabled
-guard       PreToolUse    ^(Bash|Write|Edit|NotebookEdit)$  disabled
+capability  event                           matcher                           state
+enrich      SessionStart, UserPromptSubmit  *                                 enabled
+format      PostToolUse                     ^(Write|Edit|NotebookEdit)$       enabled
+guard       PreToolUse                      ^(Bash|Write|Edit|NotebookEdit)$  enabled
+heal        PostToolUse                     ^(Write|Edit|NotebookEdit)$       enabled
+loopguard   PreToolUse, PostToolUse         ^(Bash)$                          enabled
+notify      PreToolUse, PostToolUse         *                                 enabled
 
-3 capability(ies), 0 enabled, 3 disabled.
+6 capability(ies), 6 enabled, 0 disabled.
 ```
 
 ```sh
