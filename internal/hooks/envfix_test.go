@@ -110,3 +110,59 @@ func TestEnvFixRewritesArgsKept(t *testing.T) {
 		t.Errorf("args lost in rewrite: %q", updated.Command)
 	}
 }
+
+func TestEnvFixEdgeCases(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".venv", "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".venv", "bin", "pytest"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Empty cwd: no rewrite.
+	ev := bashCmdEvent("pytest -x", "")
+	resp, err := envFix(context.Background(), ev)
+	if err != nil || resp != nil {
+		t.Errorf("empty cwd: resp=%+v err=%v, want nil", resp, err)
+	}
+	// Empty command.
+	ev = bashCmdEvent("", dir)
+	resp, err = envFix(context.Background(), ev)
+	if err != nil || resp != nil {
+		t.Errorf("empty command: resp=%+v err=%v, want nil", resp, err)
+	}
+}
+
+func TestEnvFixPreservesBashInputFields(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".venv", "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".venv", "bin", "pytest"), []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(map[string]any{
+		"command":           "pytest -x",
+		"description":       "run tests",
+		"timeout":           300,
+		"run_in_background": true,
+	})
+	e := &payload.Event{HookEventName: payload.EventPreToolUse, ToolName: "Bash", ToolInput: raw, Cwd: dir}
+	resp, err := envFix(context.Background(), e)
+	if err != nil || resp == nil || resp.HookSpecificOutput == nil {
+		t.Fatalf("expected rewrite, got resp=%+v err=%v", resp, err)
+	}
+	var updated struct {
+		Command         string `json:"command"`
+		Description     string `json:"description"`
+		Timeout         int    `json:"timeout"`
+		RunInBackground bool   `json:"run_in_background"`
+	}
+	if err := json.Unmarshal(resp.HookSpecificOutput.UpdatedInput, &updated); err != nil {
+		t.Fatalf("UpdatedInput invalid: %v", err)
+	}
+	if updated.Description != "run tests" || updated.Timeout != 300 || !updated.RunInBackground {
+		t.Errorf("fields not preserved: %+v", updated)
+	}
+}

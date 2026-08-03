@@ -355,3 +355,12 @@ func TestShannonEntropy(t *testing.T) {
 		t.Errorf("random-looking body entropy = %f, want >= 4.5", h)
 	}
 }
+
+func TestWindowsEnvFileAsks(t *testing.T) {
+	// Windows-style path to a .env: checkPath must treat it like the POSIX
+	// one (ask, not a hard block).
+	got := decision(t, "Write", map[string]string{"file_path": `C:\Users\me\proj\.env`, "content": "A=1\n"})
+	if got != payload.DecisionAsk {
+		t.Errorf("windows .env got %s, want ask", orNone(got))
+	}
+}

@@ -78,3 +78,20 @@ func TestInstallPluginCopiesTree(t *testing.T) {
 	}
 	_ = oldHome
 }
+
+func TestModuleCacheRoot(t *testing.T) {
+	t.Setenv("GOMODCACHE", "/custom/mod")
+	if got := moduleCacheRoot(); got != "/custom/mod" {
+		t.Errorf("GOMODCACHE = %q", got)
+	}
+	t.Setenv("GOMODCACHE", "")
+	t.Setenv("GOPATH", "/custom/gopath")
+	if got := moduleCacheRoot(); got != filepath.Join("/custom/gopath", "pkg", "mod") {
+		t.Errorf("GOPATH fallback = %q", got)
+	}
+	t.Setenv("GOPATH", "")
+	t.Setenv("HOME", t.TempDir())
+	if got := moduleCacheRoot(); got == "" {
+		t.Error("HOME fallback must produce a non-empty path")
+	}
+}
