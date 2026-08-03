@@ -3,6 +3,7 @@ package capcfg
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -68,7 +69,7 @@ func TestCorruptConfigDefaultsToAllEnabled(t *testing.T) {
 }
 
 func TestSaveFileMode(t *testing.T) {
-	if os.Getenv("CI") == "" && os.Getenv("GOOS") == "windows" {
+	if runtime.GOOS == "windows" {
 		t.Skip("Windows has no POSIX permission semantics")
 	}
 	withIsolatedHome(t)

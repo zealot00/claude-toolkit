@@ -64,7 +64,11 @@ func TestInstallPluginCopiesTree(t *testing.T) {
 	osExecutable = func() (string, error) { return filepath.Join(src, "bin", "tool"), nil }
 	defer func() { osExecutable = oldExe }()
 
-	t.Setenv("HOME", t.TempDir()) // os.UserHomeDir reads $HOME on POSIX
+	// Point the exe search at src, then install to a fake HOME. Windows reads
+	// USERPROFILE, POSIX reads HOME; set both so the test is hermetic.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
 	dst, err := installPlugin(false)
 	if err != nil {
