@@ -12,8 +12,8 @@ import (
 	"github.com/zealot00/claude-toolkit/internal/payload"
 )
 
-// Guard is a PreToolUse hook that blocks irreversible or exfiltrating
-// commands before Claude Code runs them.
+// Guard is the "guard" capability. It is a PreToolUse hook that blocks
+// irreversible or exfiltrating commands before Claude Code runs them.
 //
 // It is deliberately narrow. Every rule targets an action that destroys data
 // outside the working tree, hands a shell to a remote server, or leaks a
@@ -23,7 +23,7 @@ import (
 func Guard() *dispatcher.Route {
 	return &dispatcher.Route{
 		Name:    "guard",
-		Event:   payload.EventPreToolUse,
+		Events:  []string{payload.EventPreToolUse},
 		Tools:   []string{"Bash", "Write", "Edit", "NotebookEdit"},
 		Handler: guard,
 	}

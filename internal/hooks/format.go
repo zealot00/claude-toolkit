@@ -13,17 +13,21 @@ import (
 	"github.com/zealot00/claude-toolkit/internal/payload"
 )
 
-// Formatter is a PostToolUse hook that runs the project's formatter over a
-// file Claude just wrote.
+// Formatter is the "format" capability. It is a PostToolUse hook that runs
+// the project's formatter over a file Claude just wrote.
 //
 // The point is not tidiness. When a formatter rewrites a file, Claude's
 // in-context copy silently goes stale, and its next Edit fails on a string
 // that no longer matches. So the hook reports back only when the file actually
 // changed, telling Claude to re-read before editing again.
+//
+// "format" will eventually be folded into the broader "heal" capability,
+// which will also run goimports / ruff --fix and incremental tests; the two
+// share the same PostToolUse slot.
 func Formatter() *dispatcher.Route {
 	return &dispatcher.Route{
-		Name:    "formatter",
-		Event:   payload.EventPostToolUse,
+		Name:    "format",
+		Events:  []string{payload.EventPostToolUse},
 		Tools:   []string{"Write", "Edit", "NotebookEdit"},
 		Handler: format,
 	}

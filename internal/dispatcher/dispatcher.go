@@ -18,15 +18,21 @@ import (
 // (nil, nil) means "no opinion" and produces no stdout.
 type Handler func(ctx context.Context, e *payload.Event) (*payload.Response, error)
 
-// Route binds a handler to one event, optionally narrowed to certain tools.
+// Route binds a handler to one or more events, optionally narrowed to certain
+// tools. A capability ("guard", "heal", "enrich") is one Route that may listen
+// to several events -- the same enrich handler, for instance, can fire on
+// SessionStart and UserPromptSubmit without registering twice.
 type Route struct {
-	// Name identifies the route in diagnostics and doctor output.
+	// Name identifies the capability in diagnostics and doctor output, e.g.
+	// "guard" / "heal" / "enrich" / "truncate".
 	Name string
-	// Event is the hook event name, e.g. payload.EventPreToolUse.
-	Event string
+	// Events is the set of hook event names this route responds to, e.g.
+	// [payload.EventPreToolUse] or
+	// [payload.EventSessionStart, payload.EventUserPromptSubmit].
+	Events []string
 	// Tools narrows the route to specific tool names. Empty matches every
-	// tool. Entries are matched literally, or as an unanchored regexp when
-	// they contain regexp metacharacters (mirroring settings.json matchers).
+	// tool. Entries are matched literally, or as a regexp when they contain
+	// regexp metacharacters.
 	Tools []string
 	// Handler runs when the route matches.
 	Handler Handler
@@ -34,7 +40,7 @@ type Route struct {
 	toolRe []*regexp.Regexp
 }
 
-// Dispatcher holds the registered routes.
+// Dispatcher holds the registered routes, keyed by event.
 type Dispatcher struct {
 	routes map[string][]*Route
 }
@@ -46,9 +52,13 @@ func New() *Dispatcher {
 
 var metaChars = regexp.MustCompile(`[.*+?()\[\]{}^$\\]`)
 
-// Register adds a route. It panics on an invalid tool pattern, which can only
-// happen from a programming error at wiring time, never from hook input.
+// Register adds a route under each of its events. It panics on an invalid
+// tool pattern, which can only happen from a programming error at wiring time,
+// never from hook input.
 func (d *Dispatcher) Register(r *Route) {
+	if len(r.Events) == 0 {
+		panic(fmt.Sprintf("dispatcher: route %q has no events", r.Name))
+	}
 	for _, t := range r.Tools {
 		if !metaChars.MatchString(t) {
 			r.toolRe = append(r.toolRe, nil) // literal; placeholder keeps indices aligned
@@ -60,10 +70,13 @@ func (d *Dispatcher) Register(r *Route) {
 		}
 		r.toolRe = append(r.toolRe, re)
 	}
-	d.routes[r.Event] = append(d.routes[r.Event], r)
+	for _, ev := range r.Events {
+		d.routes[ev] = append(d.routes[ev], r)
+	}
 }
 
-// Routes returns every registered route, for diagnostics.
+// Routes returns every registered route, for diagnostics. The same route may
+// appear multiple times if it is registered for several events.
 func (d *Dispatcher) Routes() []*Route {
 	var all []*Route
 	for _, rs := range d.routes {
@@ -85,9 +98,9 @@ func (d *Dispatcher) Events() []string {
 }
 
 // Matcher returns the settings.json matcher covering every route registered
-// for event: the union of their tool patterns, or "*" if any route matches all
-// tools. Narrowing the matcher here means Claude Code never spawns the binary
-// for a tool no route would have handled.
+// for event: the union of their tool patterns, anchored so substring matches
+// (Claude Code uses unanchored JS RegExp.test) cannot leak through. A route
+// that matches every tool collapses to "*".
 func (d *Dispatcher) Matcher(event string) string {
 	var tools []string
 	seen := map[string]bool{}
@@ -105,7 +118,7 @@ func (d *Dispatcher) Matcher(event string) string {
 	if len(tools) == 0 {
 		return "*"
 	}
-	return strings.Join(tools, "|")
+	return "^(" + strings.Join(tools, "|") + ")$"
 }
 
 func (r *Route) matchesTool(tool string) bool {

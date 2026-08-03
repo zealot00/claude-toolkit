@@ -11,16 +11,18 @@ import (
 	"github.com/zealot00/claude-toolkit/internal/payload"
 )
 
-// SessionContext is a SessionStart hook that injects the repository's current
-// state into the conversation.
+// SessionContext is the "enrich" capability. It injects the repository's
+// current state into the conversation at session start so Claude opens every
+// session knowing which branch it is on and what is already uncommitted,
+// instead of wasting its first tool calls rediscovering that.
 //
-// Without it Claude opens every session blind to which branch it is on and
-// what is already uncommitted, and routinely wastes its first tool calls
-// rediscovering that. Injecting it once at startup costs one git invocation.
+// The capability may eventually fire on UserPromptSubmit as well; routing is
+// declared by the Events field so adding a second event does not require a
+// second registration.
 func SessionContext() *dispatcher.Route {
 	return &dispatcher.Route{
-		Name:    "session-context",
-		Event:   payload.EventSessionStart,
+		Name:    "enrich",
+		Events:  []string{payload.EventSessionStart},
 		Handler: sessionContext,
 	}
 }
@@ -62,7 +64,7 @@ func sessionContext(ctx context.Context, e *payload.Event) (*payload.Response, e
 
 	if log := git(ctx, dir, "log", "-5", "--pretty=format:%h %s"); log != "" {
 		b.WriteString("- Recent commits:\n")
-		for _, l := range strings.Split(log, "\n") {
+		for l := range strings.SplitSeq(log, "\n") {
 			fmt.Fprintf(&b, "  - %s\n", l)
 		}
 	}
