@@ -90,20 +90,19 @@ cmd/
 
 > 把 PostToolUse 从「格式化」升级为「自动修复 + 验证」闭环。
 
-- [ ] **`pkg/healer/` 子包**
-  - 语言检测：`*.go` / `*.py` / `*.ts` 派发到对应 fixer
-  - Go：检测到 import 缺失 / 未使用时跑 `goimports -w`（不动磁盘外的内容）
-  - Python：检测到 `unused-import / undefined-name` 时跑 `ruff check --fix --select F401,F821`
-  - TypeScript / JS：暂不内置修复器（生态太杂），仅跑 prettier
-- [ ] **增量测试 runner**
+- [x] **`pkg/healer/` 子包**（实现于 `internal/hooks/format.go` 修复链）
+  - 语言检测：`*.go` / `*.py` 派发到对应 fixer（TS 仅 prettier，保持）
+  - Go：`goimports -w` → fallback `gofmt -w`（实现于 1.1）
+  - Python：`ruff check --fix --select F401,F821` → `ruff format` → fallback `black -q`（实现于 1.1）
+- [x] **增量测试 runner**（`claude-toolkit test`，实现于 1.2/1.3）
   - 解析 Edit/Write 的目标文件路径 → 推断对应 `_test.go` / `test_*.py`
-  - 跑 `go test -run <TestName> -count=1` 或 `pytest -x -q <file>::<test>`
-  - 失败时构造 `additionalContext`：只保留 Top-5 错误栈，去掉 framework banner
-  - 通过 `decision: block`（PostToolUse 顶级字段）让 Claude 必须看到失败
-- [ ] **日志截断器（`truncate` capability 前置）**
-  - 拦截 `go test` / `pytest` / `npm test` 的输出
-  - 保留 fail 行 + 前后 3 行 context，丢弃 info 噪音
-  - 写回 stderr，让 Claude 看到精简版
+  - 跑 `go test -run <TestName> -count=1` 或 `pytest <file> --maxfail=1 --tb=short`
+  - 失败时输出截断到末尾 35 行（去掉 framework banner）
+  - PostToolUse 通过 `additionalContext` 提示 Claude 调用 test 命令（heal capability）
+- [x] **日志截断器**：test 输出截断 ≤35 行（实现于 `cmd/test.go`）
+  - 保留末尾 fail 摘要行，丢弃 info 噪音
+
+> 已于 2026-08-03 落地。验收：`go test ./internal/hooks/...`、`internal/testloc` 定位测试、端到端 `claude-toolkit test` 全通过。
 
 **架构约束**：healer 不通过 hook 自身跑测试 —— 改用 PostToolUse **触发一个独立的 `claude-toolkit test <file>` 子命令**，避免 hook 超时（默认 30s 跑不完单测）。
 
@@ -113,17 +112,19 @@ cmd/
 
 ### 阶段 2：守门加固（1.5 周）—— *确定性安全*
 
-- [ ] **`guard` 增加 Git 分支防护**
+- [x] **`guard` 增加 Git 分支防护**（实现于 2.2）
   - `git commit` / `git push` 时解析当前分支
   - 黑名单：`main` / `master` / `release/*` / `production`
   - 白名单机制（项目根 `.claude-toolkit-allow` 文件）
-- [ ] **`guard` 增加高熵凭证正则**
+- [x] **`guard` 增加高熵凭证正则**（实现于 2.3）
   - 在 `Write` / `Edit` 的 `content` / `new_string` 字段上跑 entropy 检测
-  - Shannon 熵 > 4.5 + base64/hex 模式 → deny，附「疑似凭证，请人工确认」
+  - 凭证形态 token（AKIA/ghp_/sk-/PEM）+ 分级熵门 → deny，附「疑似凭证，请人工确认」
   - 与现有的路径白名单并存（不互斥）
-- [ ] **`guard` 日志/dump 截断**
+- [x] **`guard` 日志/dump 截断**（实现于 2.2）
   - Bash 输入里出现 `cat /var/log/...` / `journalctl` / `kubectl logs` 时
-  - 建议改为 `tail -100` / `--since=10m`，或直接 deny
+  - 建议改为 `tail -100` / `--since=10m`（ask 级，不直接 deny）
+
+> 注：验收中原计划 main 分支 commit → 拒绝；实现采用 ask（确认级）而非硬 deny，与 `git push --force` 一致，避免单人/私有仓库误拦。
 
 **验收**：尝试在 main 分支 commit → 拒绝；尝试写入含 AWS key 字符串的文件 → 拒绝；尝试 cat 巨型日志 → 建议替代命令。
 
@@ -131,18 +132,16 @@ cmd/
 
 ### 阶段 3：环境探针升级（1 周）—— *Token 瘦身*
 
-- [ ] **`enrich` 扩展 SessionStart 注入内容**
+- [x] **`enrich` 扩展 SessionStart 注入内容**（实现于阶段 3）
   - Go 版本 / Python 版本 / Node 版本（`go version` / `python --version` / `node --version`）
-  - 当前 venv / conda env 名（`$VIRTUAL_ENV` / `conda info --json`）
-  - 数据库连通状态（配置驱动：`~/.claude-toolkit/config.yaml` 列数据库连接）
+  - venv 路径（`$VIRTUAL_ENV`）；conda / DB 连通 / pnpm-yarn-bun 未做（见注）
   - 当前 dirty 文件列表（已有）
-  - 包管理器版本（`pnpm` / `yarn` / `bun`）
-- [ ] **DB Schema 挂载（lazy 模式）**
-  - 默认只挂「schema 摘要 + 表名列表」，最多 50 张
-  - 具体表结构等 Claude 第一次 query 该表时按需注入
-- [ ] **`enrich` 注册 UserPromptSubmit**
+- [ ] **DB Schema 挂载（lazy 模式）** —— **按评审砍掉**：隐私与 Token 风险不成比例，可用 `ast` 按需替代
+- [x] **`enrich` 注册 UserPromptSubmit**（实现于阶段 3）
   - 每次用户提问前再注入一次 `cwd` + 简短 dirty 状态
   - Claude 长时间运行后能知道 cwd 漂移
+
+> 注：conda env / 数据库连通 / 包管理器版本未实现——收益低于成本且依赖环境；toolchain 三件套（go/python/node）+ venv 已覆盖主要场景。
 
 **验收**：SessionStart 注入长度 < 2000 字符，包含全部上述字段。
 
@@ -150,12 +149,12 @@ cmd/
 
 ### 阶段 4：CLI 工具集（1.5 周）—— *Token 瘦身*
 
-- [ ] **`claude-toolkit summary <path>`**
+- [x] **`claude-toolkit summary <path>`**（实现为 `ast`，见 PLAN 阶段 4）
   - Go 路径：用 `go/parser` + `go/ast` 抽取 Package / Struct / Interface / Function 签名
-  - Python 路径：调外部 `python3 -m toolkit_ast <path>`（可选脚本，stdlib `ast` 实现）
-  - 输出 JSON / YAML，密度比 `cat *.go` 高一个数量级
-- [ ] **`claude-toolkit rules`** 列出 / 解释所有内置规则
-- [ ] **`claude-toolkit replay <event.json>`** 重放历史事件（调试 hook 用）
+  - Python 路径：**纯 Go 顶层扫描**（零 Python 依赖，取代原「外部 python 脚本」方案）
+  - 输出 JSON，密度比 `cat *.go` 高一个数量级
+- [x] **`claude-toolkit rules`** 列出 / 解释所有内置规则（17 条）
+- [ ] **`claude-toolkit replay <event.json>`** —— 未做：调试辅助，优先级低；`run < event.json` 已可手工重放
 
 **验收**：`summary .` 对一个 1 万行 Go 仓库输出 < 50 KB，包含所有导出符号。
 
@@ -163,14 +162,14 @@ cmd/
 
 ### 阶段 5：生命周期补完（1 周）—— *我之前计划中的保留项*
 
-- [ ] **`claude-toolkit upgrade [--check-only] [--force]`**
-  - 调 GitHub Releases API 比 `tag_name`
-  - 走 `install.sh` 相同的下载 + SHA-256 + 原子替换
-- [ ] **`claude-toolkit uninstall [--scope=...] [--purge-config]`**
-  - 对称于 `init`，但 `init --uninstall` 仍保留兼容
-- [ ] **`claude-toolkit log --follow --since=10m --event=pre`**
-  - 当前已有 `~/.claude/claude-toolkit.log` 文件但无查看器
-- [ ] **所有写操作支持 `--dry-run`**（`init` 已有，`upgrade` / `uninstall` 跟进）
+- [x] **`claude-toolkit upgrade [--check-only]`**（实现于阶段 7）
+  - 调 GitHub Releases API 比 `tag_name`（semver 比较）
+  - 下载 + SHA-256 + 原子替换留给官方 install.sh（脚本已校验 checksum）
+- [x] **`claude-toolkit uninstall [--scope=...] [--purge-config]`**（实现于阶段 7）
+  - 对称于 `init`，`init --uninstall` 保留兼容
+- [x] **`claude-toolkit log --follow --event=pre`**（实现于阶段 7）
+  - `--follow`/`--lines`/`--event`；`--since` 未做（日志行无时间戳，收益低）
+- [x] **所有写操作支持 `--dry-run`**（init / manage / uninstall 已支持）
 
 ---
 

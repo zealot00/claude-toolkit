@@ -1,0 +1,28 @@
+{
+  "version": "0.1.0",
+  "description": "Self-bootstrapping guardrail and productivity toolkit for Claude Code",
+  "homepage": "https://github.com/zealot00/claude-toolkit",
+  "license": "MIT",
+  "architecture": {
+    "64bit": {
+      "url": "https://github.com/zealot00/claude-toolkit/releases/download/v0.1.0/claude-toolkit_windows_amd64.zip",
+      "hash": "REPLACE_WITH_WINDOWS_AMD64_SHA256"
+    },
+    "arm64": {
+      "url": "https://github.com/zealot00/claude-toolkit/releases/download/v0.1.0/claude-toolkit_windows_arm64.zip",
+      "hash": "REPLACE_WITH_WINDOWS_ARM64_SHA256"
+    }
+  },
+  "bin": "claude-toolkit.exe",
+  "checkver": "github",
+  "autoupdate": {
+    "architecture": {
+      "64bit": {
+        "url": "https://github.com/zealot00/claude-toolkit/releases/download/v$version/claude-toolkit_windows_amd64.zip"
+      },
+      "arm64": {
+        "url": "https://github.com/zealot00/claude-toolkit/releases/download/v$version/claude-toolkit_windows_arm64.zip"
+      }
+    }
+  }
+}

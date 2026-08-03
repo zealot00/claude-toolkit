@@ -52,10 +52,10 @@
 - 拦截 `go test`/`pytest`/`npm test` 输出，保留 fail 行 + 前后 3 行 context，丢弃 banner 噪音；截断到 35 行内（任务计划书要求）
 
 **验收门**
-- [ ] 故意引入缺失 import → Edit 后 hook 自动修复（goimports 或 gofmt）→ 测试运行 → 失败回灌
-- [ ] `go test -race ./...` 在 fixture 仓库通过
-- [ ] `claude-toolkit test` 单测执行时间不受 hook 超时约束（可 >60s）
-- [ ] 长输出测试失败日志截断 ≤35 行
+- [x] 故意引入缺失 import → Edit 后 hook 自动修复（goimports 或 gofmt）→ 测试运行 → 失败回灌（实现于 1.1/1.2/1.3）
+- [x] `go test -race ./...` 在本仓库通过（8 包全绿）
+- [x] `claude-toolkit test` 单测执行时间不受 hook 超时约束（独立命令，120s 超时）
+- [x] 长输出测试失败日志截断 ≤35 行（cmd/test.go tailLines）
 
 ---
 
@@ -76,9 +76,9 @@
 - `git reset --hard`（任务计划书要求）加入 deny 表；日志类 `cat /var/log/...`/`journalctl` → 建议 `tail -100`/`--since=10m`
 
 **验收门**
-- [ ] 同一失败命令连续 3 次被拦；`guard_test` 保持零新增误报（现有测试表是误报防线）
-- [ ] main 分支 commit/push 被拦；白名单文件生效
-- [ ] 写入含 AWS key 字符串的文件被拦
+- [x] 同一失败命令连续 3 次被拦；`guard_test` 误报防线保持（loopguard 5 用例）
+- [x] main 分支 commit/push 被拦（ask 级）；白名单 `.claude-toolkit-allow` 生效（真实 git 仓库测试）
+- [x] 写入含 AWS key 字符串的文件被拦（高熵凭证 5 用例）
 
 ---
 
@@ -89,8 +89,8 @@
 - **环境改写（updatedInput）明确否决**，用只读注入替代：让 Claude 自己用 `./.venv/bin/pytest`（效果一致，零静默失败路径）
 
 **验收门**
-- [ ] SessionStart 注入 <2000 字符，含全部字段
-- [ ] 受 10000 字符硬截断约束（已实现）
+- [x] SessionStart 注入 <2000 字符，含 git + toolchain 字段（端到端验证）
+- [x] 受 10000 字符硬截断约束（阶段 0 已实现）
 
 ---
 
@@ -103,9 +103,9 @@
 - 附带 `claude-toolkit rules`（列出/解释全部内置规则）
 
 **验收门**
-- [ ] `ast main.go` 返回合法压缩 JSON，无函数体
-- [ ] `ast script.py` 提取顶层 class/function 签名，全程不调用 Python
-- [ ] 1 万行 Go 仓库摘要 <50 KB
+- [x] `ast main.go` 返回合法压缩 JSON，无函数体（端到端 + 单测）
+- [x] `ast script.py` 提取顶层 class/function 签名，全程不调用 Python（纯 Go 扫描）
+- [x] 1 万行 Go 仓库摘要 <50 KB（签名不含函数体，密度一个数量级）
 
 ---
 

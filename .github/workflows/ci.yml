@@ -47,3 +47,39 @@ jobs:
       - uses: actions/checkout@v4
       - name: ShellCheck
         run: shellcheck scripts/install.sh
+
+  # Windows smoke test: the PowerShell installer must parse, and the built
+  # binary must run the full init/manage/uninstall loop on a real Windows
+  # runner. (install.ps1's download path needs a published release, so this
+  # validates syntax + the commands it drives instead.)
+  windows-e2e:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: true
+
+      - name: Build
+        run: go build -o bin/claude-toolkit.exe .
+
+      - name: PowerShell syntax check
+        shell: pwsh
+        run: |
+          $tokens = $null; $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path 'scripts/install.ps1'), [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
+
+      - name: Smoke test (init -> manage -> uninstall)
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:TEMP "ctk-e2e"
+          .\bin\claude-toolkit.exe init --force --scope=project --project-dir="$dir" | Out-Null
+          .\bin\claude-toolkit.exe manage list --scope=project --project-dir="$dir"
+          .\bin\claude-toolkit.exe doctor --scope=project --project-dir="$dir" | Out-Null
+          .\bin\claude-toolkit.exe uninstall --scope=project --project-dir="$dir" | Out-Null

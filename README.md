@@ -370,22 +370,36 @@ claude-toolkit/
 │   ├── run.go               Hook runtime: stdin JSON -> dispatch -> stdout JSON
 │   ├── init.go              Self-installation; derives config from routes
 │   ├── manage.go            Capability toggle UI + subcommands for /toolkit
+│   ├── test.go              Incremental test runner (go test / pytest)
+│   ├── ast.go               Structural summary of a .go/.py file
+│   ├── rules.go             Lists the built-in guard rules
+│   ├── proxy.go             Optional local API proxy (429 auto-retry)
+│   ├── upgrade.go           Version check against GitHub Releases
+│   ├── uninstall.go         Symmetric removal of the toolkit's hooks
+│   ├── log.go               Tail of the CLAUDE_TOOLKIT_DEBUG log
 │   ├── capabilities.go      Capability enumeration shared by init/manage/doctor
 │   └── doctor.go            Diagnostics and hook self-tests
 ├── pkg/
-│   └── installer/
-│       └── settings.go      Non-destructive settings.json merge engine
+│   ├── installer/           Non-destructive settings.json merge engine
+│   └── dir/                 Toolkit private dir (~/.claude-toolkit) resolution
 ├── internal/
 │   ├── payload/             Typed stdin decoding and stdout response builders
 │   ├── dispatcher/          Event -> handler routing and response merging
-│   └── hooks/
-│       ├── registry.go      The single source of truth for what ships
-│       ├── guard.go         PreToolUse rules
-│       ├── bashparse.go     Quote-aware shell tokenizer
-│       ├── context.go       SessionStart repository context
-│       └── format.go        PostToolUse formatter
+│   ├── hooks/
+│   │   ├── registry.go      The single source of truth for what ships
+│   │   ├── guard.go         PreToolUse rules (plus high-entropy secret scan)
+│   │   ├── loopguard.go     Repeated-failure blocker (Pre+PostToolUse)
+│   │   ├── bashparse.go     Quote-aware shell tokenizer
+│   │   ├── context.go       SessionStart/UserPromptSubmit context injection
+│   │   ├── format.go        PostToolUse formatter/fixer pipeline
+│   │   ├── heal.go          PostToolUse incremental-test pointer
+│   │   └── notify.go        Opt-in desktop notifications (Pre+PostToolUse)
+│   ├── astsum/              Pure-Go structural summarizers (Go + Python)
+│   ├── proxy/               429-retrying HTTP transport
+│   └── testloc/             Source file -> incremental test mapping
 └── scripts/
-    └── install.sh           Checksum-verifying curl installer
+    ├── install.sh           Checksum-verifying curl installer
+    └── install.ps1          Windows installer (irm | iex)
 ```
 
 Three decisions worth knowing:
@@ -416,7 +430,9 @@ make help       # list targets
 3. If it is a new event, add its timeout to `hookTimeouts` in `cmd/init.go` and its short alias to `eventAlias` in `cmd/root.go`.
 4. Run `claude-toolkit init` again and restart Claude Code.
 
-`init` and `doctor` pick up the new route automatically — there is no second place to update.
+`init` and `doctor` pick up the new route automatically — there is no second place to update. A capability that listens on two events (like `loopguard` and `notify`, which record on PostToolUse and block on PreToolUse) is one route with both events in `Events`; each matcher group in settings.json still carries a single `--cap` name.
+
+The standalone command packages (`internal/testloc`, `internal/astsum`, `internal/proxy`) are pure libraries with no hook wiring; `cmd/` exposes them as subcommands (`test`, `ast`, `proxy`).
 
 ### Debugging
 
