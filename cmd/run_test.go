@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -38,7 +39,7 @@ func TestRunEndToEnd(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var out bytes.Buffer
-			if code := run(strings.NewReader(tt.stdin), &out, "pre", 5*time.Second); code != 0 {
+			if code := run(strings.NewReader(tt.stdin), &out, "pre", "", 5*time.Second); code != 0 {
 				t.Fatalf("exit code %d; run must always exit 0", code)
 			}
 			if !tt.wantOutput {
@@ -89,7 +90,7 @@ func TestRunFailsOpen(t *testing.T) {
 	for _, in := range inputs {
 		t.Run(truncateName(in), func(t *testing.T) {
 			var out bytes.Buffer
-			if code := run(strings.NewReader(in), &out, "", 5*time.Second); code != 0 {
+			if code := run(strings.NewReader(in), &out, "", "", 5*time.Second); code != 0 {
 				t.Errorf("exit code %d for input %q; must be 0", code, in)
 			}
 			if out.Len() > 0 && !json.Valid(out.Bytes()) {
@@ -105,11 +106,41 @@ func TestRunTrustsPayloadOverFlag(t *testing.T) {
 	const stdin = `{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"rm -rf /"}}`
 	var out bytes.Buffer
 	// Deliberately wrong flag for this payload.
-	if code := run(strings.NewReader(stdin), &out, "post", 5*time.Second); code != 0 {
+	if code := run(strings.NewReader(stdin), &out, "post", "", 5*time.Second); code != 0 {
 		t.Fatalf("exit code %d", code)
 	}
 	if !strings.Contains(out.String(), `"deny"`) {
 		t.Errorf("the guard should still have denied; got %s", out.String())
+	}
+}
+
+// TestRunCapFilter pins --cap: dispatch must narrow to one capability, and a
+// wrong --cap must degrade to a silent no-op rather than an error.
+func TestRunCapFilter(t *testing.T) {
+	const stdin = `{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"rm -rf /"}}`
+
+	var out bytes.Buffer
+	if code := run(strings.NewReader(stdin), &out, "pre", "guard", 5*time.Second); code != 0 {
+		t.Fatalf("exit code %d; run must always exit 0", code)
+	}
+	if !strings.Contains(out.String(), `"deny"`) {
+		t.Errorf("guard should have denied under --cap=guard; got %s", out.String())
+	}
+
+	out.Reset()
+	if code := run(strings.NewReader(stdin), &out, "pre", "format", 5*time.Second); code != 0 {
+		t.Fatalf("exit code %d for a capability that does not handle the event", code)
+	}
+	if out.Len() != 0 {
+		t.Errorf("format does not listen on PreToolUse; expected no output, got %s", out.String())
+	}
+
+	out.Reset()
+	if code := run(strings.NewReader(stdin), &out, "pre", "no-such-cap", 5*time.Second); code != 0 {
+		t.Fatalf("exit code %d for an unknown capability; must fail open", code)
+	}
+	if out.Len() != 0 {
+		t.Errorf("unknown capability should produce no output; got %s", out.String())
 	}
 }
 
@@ -139,16 +170,31 @@ func TestBuildSpecsMatchesRoutes(t *testing.T) {
 	if len(specs) == 0 {
 		t.Fatal("no specs generated")
 	}
+	seen := map[string]bool{}
 	for _, s := range specs {
 		if s.Matcher == "" {
 			t.Errorf("%s has an empty matcher", s.Event)
 		}
-		if !strings.HasPrefix(s.Command, "claude-toolkit run --event=") {
-			t.Errorf("%s command is malformed: %q", s.Event, s.Command)
+		if s.Capability == "" {
+			t.Errorf("%s spec carries no capability name", s.Event)
+		}
+		if seen[s.Capability] {
+			t.Errorf("capability %q generated more than one spec", s.Capability)
+		}
+		seen[s.Capability] = true
+		want := fmt.Sprintf("claude-toolkit run --event=%s --cap=%s", eventAlias[s.Event], s.Capability)
+		if s.Command != want {
+			t.Errorf("%s command is malformed: %q, want %q", s.Capability, s.Command, want)
 		}
 		if s.Timeout <= 0 {
 			t.Errorf("%s has no timeout; a hung hook would stall the session", s.Event)
 		}
+	}
+
+	// A restricted build must be a strict subset of the full build.
+	only := buildSpecs("claude-toolkit", "guard")
+	if len(only) != 1 || only[0].Capability != "guard" {
+		t.Fatalf("buildSpecs(guard) = %+v, want exactly the guard spec", only)
 	}
 }
 

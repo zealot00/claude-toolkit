@@ -8,11 +8,20 @@
 #   CLAUDE_TOOLKIT_VERSION   tag to install (default: latest release)
 #   INSTALL_DIR              destination directory (default: first writable of
 #                            /usr/local/bin, ~/.local/bin)
+#   CLAUDE_TOOLKIT_PLUGIN_DIR  if set, copy the bundled Claude Code plugin
+#                            (.claude-plugin/ + commands/) into this directory
 #
 # This script downloads a release binary and verifies its SHA-256 against the
 # published checksums file. It deliberately does NOT run `claude-toolkit init`
 # for you: init edits ~/.claude/settings.json, and a script piped from the
 # internet should not silently modify your configuration. Run it yourself.
+# For the same reason, the Claude Code plugin is only copied when
+# CLAUDE_TOOLKIT_PLUGIN_DIR is set explicitly.
+#
+# External tools (git, formatters like gofmt/ruff/prettier/black, and later
+# pytest) are OPTIONAL: the binary itself is a zero-dependency static Go
+# build, and every hook degrades to a silent no-op when a tool is missing.
+# Nothing here installs or requires them.
 
 set -euo pipefail
 
@@ -127,6 +136,21 @@ main() {
   tar -xzf "$tmp/$archive" -C "$tmp" "$BIN" \
     || die "could not extract $BIN from the archive"
 
+  # Opt-in Claude Code plugin install. The archive carries .claude-plugin/
+  # and commands/; nothing is copied unless the user asked.
+  if [ -n "${CLAUDE_TOOLKIT_PLUGIN_DIR:-}" ]; then
+    if [ -d "$tmp/.claude-plugin" ]; then
+      mkdir -p "$CLAUDE_TOOLKIT_PLUGIN_DIR" \
+        || die "could not create $CLAUDE_TOOLKIT_PLUGIN_DIR"
+      cp -R "$tmp/.claude-plugin" "$tmp/commands" "$CLAUDE_TOOLKIT_PLUGIN_DIR/" \
+        || die "could not copy the plugin into $CLAUDE_TOOLKIT_PLUGIN_DIR"
+      info "installed Claude Code plugin to $CLAUDE_TOOLKIT_PLUGIN_DIR"
+      info "  enable it with /plugin in Claude Code, or: claude plugin install $CLAUDE_TOOLKIT_PLUGIN_DIR"
+    else
+      warn "CLAUDE_TOOLKIT_PLUGIN_DIR set but this archive has no .claude-plugin; plugin skipped"
+    fi
+  fi
+
   dir="$(choose_dir)"
   mkdir -p "$dir" || die "could not create $dir"
 
@@ -159,6 +183,16 @@ Done. Next steps:
 
 init backs up your settings file and merges into it; your existing hooks,
 credentials and model settings are left untouched.
+
+The Claude Code plugin (the /toolkit command) is bundled in the archive under
+.claude-plugin/ and commands/. Enable it by pointing /plugin at the unpacked
+archive or the repo, or re-run this installer with CLAUDE_TOOLKIT_PLUGIN_DIR
+set to a directory you want it copied into.
+
+External tools (git, formatters like gofmt/ruff/prettier) are optional: the
+binary itself is a zero-dependency static Go build, and each hook degrades to
+a silent no-op when a tool is missing. Run `$BIN doctor` to see which are
+present.
 
 EOF
 }

@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/zealot00/claude-toolkit/internal/dispatcher"
 	"github.com/zealot00/claude-toolkit/internal/payload"
@@ -27,10 +28,27 @@ func SessionContext() *dispatcher.Route {
 	}
 }
 
+const (
+	// maxContextLen caps the injected context. Claude Code truncates hook
+	// output at 10,000 characters; truncating here keeps the text complete
+	// rather than silently cut mid-line by the host.
+	maxContextLen = 10000
+	// minRemaining is the budget a SessionStart hook needs to gather git
+	// context. Below it the hook degrades to a no-op rather than let the
+	// session wait on a hook that cannot finish.
+	minRemaining = 3 * time.Second
+	// maxStatusLines caps the injected file list. A 400-file diff is noise
+	// rather than context.
+	maxStatusLines = 15
+)
+
 func sessionContext(ctx context.Context, e *payload.Event) (*payload.Response, error) {
 	dir := e.Cwd
 	if dir == "" {
 		return nil, nil
+	}
+	if left, ok := dispatcher.Remaining(ctx); ok && left < minRemaining {
+		return nil, nil // not enough time; missing context beats a hung session
 	}
 	if !inGitRepo(ctx, dir) {
 		return nil, nil
@@ -69,12 +87,18 @@ func sessionContext(ctx context.Context, e *payload.Event) (*payload.Response, e
 		}
 	}
 
-	return payload.Context(payload.EventSessionStart, strings.TrimRight(b.String(), "\n")), nil
+	out := strings.TrimRight(b.String(), "\n")
+	return payload.Context(payload.EventSessionStart, truncateContext(out, maxContextLen)), nil
 }
 
-// maxStatusLines caps the injected file list. Hook output is truncated at
-// 10,000 characters, and a 400-file diff is noise rather than context.
-const maxStatusLines = 15
+// truncateContext trims s to limit bytes, appending an ellipsis so the
+// truncation is visible rather than a silent mid-word cut.
+func truncateContext(s string, limit int) string {
+	if len(s) <= limit {
+		return s
+	}
+	return s[:limit] + "\n...(truncated by claude-toolkit)"
+}
 
 func inGitRepo(ctx context.Context, dir string) bool {
 	return git(ctx, dir, "rev-parse", "--is-inside-work-tree") == "true"

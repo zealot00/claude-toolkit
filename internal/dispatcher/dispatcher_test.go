@@ -2,7 +2,9 @@ package dispatcher
 
 import (
 	"context"
+	"os"
 	"testing"
+	"time"
 
 	"github.com/zealot00/claude-toolkit/internal/payload"
 )
@@ -141,5 +143,92 @@ func TestDispatchUnknownEventIsNoOp(t *testing.T) {
 	}
 	if got != nil {
 		t.Errorf("want no response for an unregistered event, got %+v", got)
+	}
+}
+
+// TestDispatchCapabilityFilter pins --cap: dispatch must narrow to one
+// capability, and the merge still applies within that subset.
+func TestDispatchCapabilityFilter(t *testing.T) {
+	d := New()
+	var guardRan, formatRan bool
+	d.Register(&Route{Name: "guard", Events: []string{payload.EventPreToolUse},
+		Handler: func(context.Context, *payload.Event) (*payload.Response, error) {
+			guardRan = true
+			return payload.Deny("dangerous"), nil
+		}})
+	d.Register(&Route{Name: "format", Events: []string{payload.EventPreToolUse},
+		Handler: func(context.Context, *payload.Event) (*payload.Response, error) {
+			formatRan = true
+			return nil, nil
+		}})
+
+	e := &payload.Event{HookEventName: payload.EventPreToolUse}
+
+	got, err := d.Dispatch(context.Background(), e, "guard")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !guardRan {
+		t.Error("guard did not run under --cap=guard")
+	}
+	if formatRan {
+		t.Error("format ran under --cap=guard; capability filter is broken")
+	}
+	if got == nil || got.HookSpecificOutput.PermissionDecision != payload.DecisionDeny {
+		t.Errorf("guard's deny was lost: %+v", got)
+	}
+
+	// Unknown capability name: no route matches, no opinion, no error.
+	guardRan, formatRan = false, false
+	got, err = d.Dispatch(context.Background(), e, "no-such-cap")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != nil || guardRan || formatRan {
+		t.Errorf("unknown capability should be a silent no-op, got resp=%+v guard=%v format=%v", got, guardRan, formatRan)
+	}
+}
+
+// TestCwdEnvFallback pins the cwd override in Dispatch: an event whose
+// payload carries no cwd must pick up CLAUDE_PROJECT_DIR, so SessionEnd and
+// friends still know where the project is.
+func TestCwdEnvFallback(t *testing.T) {
+	old, had := os.LookupEnv("CLAUDE_PROJECT_DIR")
+	os.Setenv("CLAUDE_PROJECT_DIR", "/some/project")
+	defer func() {
+		if had {
+			os.Setenv("CLAUDE_PROJECT_DIR", old)
+		} else {
+			os.Unsetenv("CLAUDE_PROJECT_DIR")
+		}
+	}()
+
+	d := New()
+	var gotCwd string
+	d.Register(&Route{Name: "probe", Events: []string{payload.EventSessionStart},
+		Handler: func(_ context.Context, e *payload.Event) (*payload.Response, error) {
+			gotCwd = e.Cwd
+			return nil, nil
+		}})
+
+	e := &payload.Event{HookEventName: payload.EventSessionStart} // cwd empty
+	if _, err := d.Dispatch(context.Background(), e); err != nil {
+		t.Fatal(err)
+	}
+	if gotCwd != "/some/project" {
+		t.Errorf("handler saw cwd %q, want CLAUDE_PROJECT_DIR fallback", gotCwd)
+	}
+}
+
+// TestRemaining pins the timeout-awareness helper handlers use to degrade.
+func TestRemaining(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	left, ok := Remaining(ctx)
+	if !ok || left <= 0 || left > time.Second {
+		t.Errorf("Remaining = %v, %v; want positive and bounded by the timeout", left, ok)
+	}
+	if _, ok := Remaining(context.Background()); ok {
+		t.Error("Remaining on a context without deadline should report no deadline")
 	}
 }

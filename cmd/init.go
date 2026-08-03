@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/zealot00/claude-toolkit/internal/hooks"
 	"github.com/zealot00/claude-toolkit/internal/payload"
 	"github.com/zealot00/claude-toolkit/pkg/installer"
 )
@@ -23,20 +22,31 @@ var hookTimeouts = map[string]int{
 }
 
 // buildSpecs derives the settings.json entries from the routes the binary
-// actually registers, so the two can never disagree.
-func buildSpecs(command string) []installer.Spec {
-	d := hooks.Register()
-	specs := make([]installer.Spec, 0, len(d.Events()))
-	for _, ev := range d.Events() {
-		alias, ok := eventAlias[ev]
+// actually registers, so the two can never disagree. caps restricts which
+// capabilities get an entry; empty installs every capability. Each capability
+// becomes its own matcher group whose command names it via --cap, which is
+// what lets `manage disable <cap>` remove one capability without touching its
+// siblings on the same event.
+func buildSpecs(command string, caps ...string) []installer.Spec {
+	requested := map[string]bool{}
+	for _, c := range caps {
+		requested[c] = true
+	}
+	specs := make([]installer.Spec, 0, len(registeredCapabilities()))
+	for _, cap := range registeredCapabilities() {
+		if len(caps) > 0 && !requested[cap.name] {
+			continue
+		}
+		alias, ok := eventAlias[cap.event]
 		if !ok {
-			alias = ev
+			alias = cap.event
 		}
 		specs = append(specs, installer.Spec{
-			Event:   ev,
-			Matcher: d.Matcher(ev),
-			Command: fmt.Sprintf("%s run --event=%s", command, alias),
-			Timeout: hookTimeouts[ev],
+			Event:      cap.event,
+			Capability: cap.name,
+			Matcher:    cap.matcher,
+			Command:    fmt.Sprintf("%s run --event=%s --cap=%s", command, alias, cap.name),
+			Timeout:    hookTimeouts[cap.event],
 		})
 	}
 	return specs

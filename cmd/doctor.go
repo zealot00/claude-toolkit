@@ -80,6 +80,8 @@ func doctorCmd(args []string) int {
 		checkRegistration(rp, path)
 	}
 	checkSelfTest(rp)
+	checkCwdEnvFallback(rp, dir)
+	checkPlugin(rp, dir)
 	checkDependencies(rp, dir)
 
 	fmt.Printf("claude-toolkit %s  (%s/%s, go %s)\n\n", Version, runtime.GOOS, runtime.GOARCH, runtime.Version())
@@ -250,6 +252,19 @@ func checkRegistration(rp *report, path string) {
 		verifyCommand(rp, e.Command)
 		break
 	}
+
+	// Entries that predate --cap tags cannot be managed per-capability; init
+	// migrates them.
+	var legacy int
+	for _, e := range entries {
+		if e.Capability == "" {
+			legacy++
+		}
+	}
+	if legacy > 0 {
+		rp.warn("hook registration", fmt.Sprintf("%d legacy entr%s without --cap tags", legacy, plural(legacy)),
+			"Run `claude-toolkit init` to migrate to capability-tagged entries, then `manage` works on them.")
+	}
 }
 
 // verifyCommand executes the configured command with `version` to prove Claude
@@ -314,6 +329,13 @@ func checkSelfTest(rp *report) {
 			strings.Join(failures, "\n"))
 		return
 	}
+	// The defer decision must stay constructible; the schema has been picky
+	// about it across versions.
+	r := payload.Defer("doctor self-test")
+	if r == nil || r.HookSpecificOutput == nil || r.HookSpecificOutput.PermissionDecision != payload.DecisionDefer {
+		rp.fail("hook self-test", "defer decision is not constructible", "payload.Defer must produce permissionDecision=defer")
+		return
+	}
 	rp.ok("hook self-test", fmt.Sprintf("%d/%d cases pass", len(cases), len(cases)))
 }
 
@@ -333,22 +355,102 @@ func bashEvent(command string) payload.Event {
 	}
 }
 
+// checkCwdEnvFallback proves the cwd override: an event whose payload carries
+// an empty cwd must still produce SessionStart context when CLAUDE_PROJECT_DIR
+// points at a git repository.
+func checkCwdEnvFallback(rp *report, dir string) {
+	if !isGitRepo(dir) {
+		rp.ok("cwd env fallback", "skipped: current directory is not a git repository")
+		return
+	}
+	old, had := os.LookupEnv("CLAUDE_PROJECT_DIR")
+	os.Setenv("CLAUDE_PROJECT_DIR", dir)
+	defer func() {
+		if had {
+			os.Setenv("CLAUDE_PROJECT_DIR", old)
+		} else {
+			os.Unsetenv("CLAUDE_PROJECT_DIR")
+		}
+	}()
+
+	e := payload.Event{HookEventName: payload.EventSessionStart} // cwd intentionally empty
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	resp, err := hooks.Register().Dispatch(ctx, &e)
+	if err != nil {
+		rp.fail("cwd env fallback", err.Error(), "")
+		return
+	}
+	if resp == nil || resp.HookSpecificOutput == nil || resp.HookSpecificOutput.AdditionalContext == "" {
+		rp.fail("cwd env fallback", "empty cwd with CLAUDE_PROJECT_DIR set produced no context",
+			"The SessionStart hook must derive cwd from $CLAUDE_PROJECT_DIR.")
+		return
+	}
+	rp.ok("cwd env fallback", "empty cwd resolved via CLAUDE_PROJECT_DIR")
+}
+
+// isGitRepo reports whether dir is inside a git working tree.
+func isGitRepo(dir string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--is-inside-work-tree")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	return err == nil && strings.TrimSpace(string(out)) == "true"
+}
+
+// checkPlugin verifies the Claude Code plugin ships correctly: a manifest that
+// parses, names this plugin, and has a commands/toolkit.md next to it, at
+// either the project root or the installed location. The plugin is optional --
+// the CLI works without it -- so a problem here is a warning, not a failure.
+func checkPlugin(rp *report, dir string) {
+	var candidates []string
+	candidates = append(candidates, filepath.Join(dir, ".claude-plugin", "plugin.json"))
+	if home, err := os.UserHomeDir(); err == nil {
+		candidates = append(candidates,
+			filepath.Join(home, ".claude", "plugins", "claude-toolkit", ".claude-plugin", "plugin.json"))
+	}
+
+	for _, path := range candidates {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var m struct {
+			Name string `json:"name"`
+		}
+		if err := json.Unmarshal(data, &m); err != nil {
+			rp.warn("claude-code plugin", path, "plugin.json does not parse as JSON; /toolkit will not load.")
+			return
+		}
+		if m.Name != "claude-toolkit" {
+			rp.warn("claude-code plugin", path, fmt.Sprintf("manifest name is %q, want %q", m.Name, "claude-toolkit"))
+			return
+		}
+		// commands/toolkit.md sits next to the .claude-plugin dir.
+		cmd := filepath.Join(filepath.Dir(filepath.Dir(path)), "commands", "toolkit.md")
+		if _, err := os.Stat(cmd); err != nil {
+			rp.warn("claude-code plugin", path, "manifest is valid but commands/toolkit.md is missing; /toolkit will not register.")
+			return
+		}
+		rp.ok("claude-code plugin", path)
+		return
+	}
+	rp.warn("claude-code plugin", "not found",
+		"The /toolkit command lives in this repo's .claude-plugin/ directory. Install it\n"+
+			"with /plugin, or copy it to ~/.claude/plugins/claude-toolkit/.")
+}
+
 // checkDependencies reports on the external tools the hooks shell out to.
 // None of them is required -- each hook degrades to a no-op -- so these are
 // informational rather than failures.
 func checkDependencies(rp *report, dir string) {
 	if _, err := exec.LookPath("git"); err != nil {
 		rp.warn("git", "not found", "The SessionStart context hook will produce nothing without it.")
+	} else if isGitRepo(dir) {
+		rp.ok("git", "available; current directory is a repository")
 	} else {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		cmd := exec.CommandContext(ctx, "git", "rev-parse", "--is-inside-work-tree")
-		cmd.Dir = dir
-		if out, err := cmd.Output(); err == nil && strings.TrimSpace(string(out)) == "true" {
-			rp.ok("git", "available; current directory is a repository")
-		} else {
-			rp.ok("git", "available; current directory is not a repository")
-		}
+		rp.ok("git", "available; current directory is not a repository")
 	}
 
 	var found []string

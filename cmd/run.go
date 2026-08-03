@@ -24,9 +24,10 @@ import (
 func runCmd(args []string) int {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	event := fs.String("event", "", "expected hook event (pre, post, session, prompt, stop); optional, the stdin payload is authoritative")
+	capName := fs.String("cap", "", "only run this capability (guard, format, enrich); empty runs all registered for the event")
 	timeout := fs.Duration("timeout", 10*time.Second, "maximum time a hook may take before it is abandoned")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s run [--event=<name>] [--timeout=<duration>]\n\n"+
+		fmt.Fprintf(os.Stderr, "Usage: %s run [--event=<name>] [--cap=<name>] [--timeout=<duration>]\n\n"+
 			"Reads a Claude Code hook event as JSON on stdin and writes the response on stdout.\n"+
 			"Not intended to be run by hand; %s init wires it up.\n\nFlags:\n", binName, binName)
 		fs.PrintDefaults()
@@ -35,14 +36,14 @@ func runCmd(args []string) int {
 		return 0 // fail open: a flag typo must not break the user's session
 	}
 
-	if code := run(os.Stdin, os.Stdout, *event, *timeout); code != 0 {
+	if code := run(os.Stdin, os.Stdout, *event, *capName, *timeout); code != 0 {
 		return code
 	}
 	return 0
 }
 
 // run is the testable core of runCmd.
-func run(stdin io.Reader, stdout io.Writer, wantEvent string, timeout time.Duration) int {
+func run(stdin io.Reader, stdout io.Writer, wantEvent, wantCap string, timeout time.Duration) int {
 	e, err := payload.Decode(stdin)
 	if err != nil {
 		debugf("run: %v", err)
@@ -61,11 +62,17 @@ func run(stdin io.Reader, stdout io.Writer, wantEvent string, timeout time.Durat
 			debugf("run: --event=%s but payload says %s; trusting the payload", wantEvent, e.HookEventName)
 		}
 	}
+	// --cap narrows dispatch to one capability. An unknown name simply matches
+	// no route, which is a no-op rather than an error.
+	var caps []string
+	if wantCap != "" {
+		caps = []string{wantCap}
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	resp, err := hooks.Register().Dispatch(ctx, e)
+	resp, err := hooks.Register().Dispatch(ctx, e, caps...)
 	if err != nil {
 		// A handler failed. Emit whatever the others decided rather than
 		// discarding a legitimate deny because an unrelated hook broke.

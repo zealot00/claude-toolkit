@@ -58,10 +58,11 @@ func Path(scope Scope, projectDir string) (string, error) {
 
 // Spec is one hook registration to inject.
 type Spec struct {
-	Event   string // e.g. "PreToolUse"
-	Matcher string // e.g. "Bash|Write|Edit"
-	Command string // e.g. "claude-toolkit run --event=pre"
-	Timeout int    // seconds; omitted from JSON when zero
+	Event      string // e.g. "PreToolUse"
+	Capability string // e.g. "guard"; names the capability this entry serves
+	Matcher    string // e.g. "Bash|Write|Edit"
+	Command    string // e.g. "claude-toolkit run --event=pre --cap=guard"
+	Timeout    int    // seconds; omitted from JSON when zero
 }
 
 // ownedCommand recognises a hook entry this toolkit installed, whether it was
@@ -373,13 +374,29 @@ func atomicWrite(path string, data []byte, mode os.FileMode) error {
 	return nil
 }
 
+// capFlag extracts --cap=<name> from a hook command. Pre-capability installs
+// (no flag) yield "". The character class covers the capability names this
+// toolkit uses (lowercase letters and hyphens); a future capability name with
+// other characters would need the regex widened here and in IsOwned.
+var capFlag = regexp.MustCompile(`--cap=([\w-]+)`)
+
+// CapabilityOf reports the capability name embedded in a hook command, or ""
+// for an entry installed before capability-tagged commands existed.
+func CapabilityOf(command string) string {
+	if m := capFlag.FindStringSubmatch(command); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
 // Installed describes one hook entry belonging to this toolkit that is
 // currently present in a settings file.
 type Installed struct {
-	Event   string
-	Matcher string
-	Command string
-	Timeout int
+	Event      string
+	Capability string
+	Matcher    string
+	Command    string
+	Timeout    int
 }
 
 // Inspect reports the toolkit's own hook entries in a settings file. A missing
@@ -427,7 +444,7 @@ func Inspect(path string) ([]Installed, error) {
 				if !ok || !IsOwned(cmd) {
 					continue
 				}
-				in := Installed{Event: ev, Matcher: matcher, Command: cmd}
+				in := Installed{Event: ev, Matcher: matcher, Command: cmd, Capability: CapabilityOf(cmd)}
 				if n, ok := em["timeout"].(json.Number); ok {
 					if v, err := n.Int64(); err == nil {
 						in.Timeout = int(v)

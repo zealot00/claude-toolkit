@@ -15,10 +15,11 @@ claude-toolkit doctor
 ## Contents
 
 - [Install](#install)
-- [The three commands](#the-three-commands)
+- [The commands](#the-commands)
 - [What the hooks do](#what-the-hooks-do)
 - [How self-installation works](#how-self-installation-works)
 - [Configuration](#configuration)
+- [Dependencies](#dependencies)
 - [Architecture](#architecture)
 - [Development](#development)
 - [Releasing](#releasing)
@@ -64,7 +65,7 @@ make install
 
 ---
 
-## The three commands
+## The commands
 
 ### 1. `claude-toolkit init`
 
@@ -144,6 +145,55 @@ echo '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command"
 {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"Blocked by claude-toolkit guard:\n  - [rm-rf-root] recursive force-delete of \"/\" removes data outside the working tree and cannot be undone"}}
 ```
 
+### 4. `claude-toolkit manage`
+
+Lists, enables and disables the toolkit's hook capabilities — the interface the plugin's `/toolkit` command drives.
+
+```
+$ claude-toolkit manage list
+claude-toolkit hooks (/Users/you/.claude/settings.json)
+
+capability  event         matcher                           state
+enrich      SessionStart  *                                 disabled
+format      PostToolUse   ^(Write|Edit|NotebookEdit)$       disabled
+guard       PreToolUse    ^(Bash|Write|Edit|NotebookEdit)$  disabled
+
+3 capability(ies), 0 enabled, 3 disabled.
+```
+
+```sh
+claude-toolkit manage enable guard        # turn one on
+claude-toolkit manage disable format      # turn one off
+claude-toolkit manage enable-all
+claude-toolkit manage disable-all
+```
+
+Run bare (`claude-toolkit manage`) for an interactive toggle UI in the terminal. Every write backs up your settings file and merges, exactly like `init` — and like `init`, the change only takes effect after you restart Claude Code. `--dry-run` shows the change without writing.
+
+---
+
+## The Claude Code plugin
+
+A companion plugin lets you manage the toolkit without leaving Claude Code. Install it, and a `/toolkit` slash command appears; Claude then runs `claude-toolkit manage list/enable/disable` for you and shows the state right in the session.
+
+**Install the local plugin.** This repository *is* the plugin: `.claude-plugin/plugin.json` plus `commands/toolkit.md` at the root. In Claude Code run `/plugin` and install the local plugin at this repository's path (or, on newer builds, `claude plugin install /path/to/claude-toolkit`). The release archives bundle the same files, so you can point `/plugin` at an unpacked archive too. Restart the session, then:
+
+```
+/toolkit
+```
+
+Ask for what you want in plain language — "show the hooks", "disable format", "re-enable guard" — and Claude will call `claude-toolkit manage` and report back. `claude-toolkit doctor` (also run by the command) verifies the result.
+
+The plugin deliberately registers **no hooks of its own**. The hooks it manages are the ones `claude-toolkit init` writes into `~/.claude/settings.json`, so there is exactly one registration per capability — the plugin never double-fires alongside the toolkit.
+
+### `/toolkit` capabilities
+
+| Capability | Event | What it does |
+|---|---|---|
+| `guard` | PreToolUse | blocks destructive / exfiltrating shell commands |
+| `format` | PostToolUse | runs the project formatter after Claude writes a file |
+| `enrich` | SessionStart | injects git branch and working-tree state |
+
 ---
 
 ## What the hooks do
@@ -176,7 +226,7 @@ Injects the repo's current state at session start: branch, divergence from upstr
 
 ### PostToolUse — formatter
 
-Runs the project's formatter after Claude writes a file — `gofmt`, `prettier`, `ruff`/`black`, `rustfmt`, `shfmt`, picked by extension and skipped when the tool is not installed. `prettier` is resolved from the nearest `node_modules/.bin` first, so the project's pinned version wins.
+Runs the project's formatter after Claude writes a file — `gofmt`, `prettier`, `ruff`/`black`, `rustfmt`, `shfmt`, picked by extension and skipped when the tool is not installed. `prettier` is resolved from the nearest `node_modules/.bin` first, so the project's pinned version wins. See [Dependencies](#dependencies) for the full list of optional tools and what happens when one is missing.
 
 The point is not tidiness. When a formatter rewrites a file, Claude's in-context copy goes stale and its next `Edit` fails on a string that no longer matches. So the hook speaks up **only when the file actually changed**, telling Claude to re-read. If the formatter fails outright, that usually means Claude just wrote code that does not parse — which it is also told.
 
@@ -241,15 +291,58 @@ To disable the toolkit without uninstalling, run `claude-toolkit init --uninstal
 
 ---
 
+## Dependencies
+
+**The binary itself has zero dependencies.** It is a single static Go
+(stdlib-only) executable; nothing is bundled and nothing is required to run
+it. The hooks shell out only to tools that are *already installed on your
+machine*, probed via `PATH` at hook time, and each hook **degrades to a
+silent no-op** when a tool is missing — no errors, no warnings in your
+session.
+
+### Optional external tools
+
+| Tool | Used by | Purpose | When missing |
+|---|---|---|---|
+| `git` | `enrich` | branch / working-tree / recent-commits context at SessionStart | the context hook produces nothing |
+| `gofmt` | `format` (`.go`) | format Go source | `.go` files are not formatted |
+| `rustfmt` | `format` (`.rs`) | format Rust source | `.rs` files are not formatted |
+| `shfmt` | `format` (`.sh`) | format shell scripts | shell scripts are not formatted |
+| `prettier` | `format` (js/ts/json/css/html/md/…) | format web & config files (project-local `node_modules/.bin` first) | those extensions are not formatted |
+| `ruff` | `format` (`.py`) | format and fix Python | falls back to `black` |
+| `black` | `format` (`.py`) | format Python | `.py` files are not formatted |
+
+Planned capabilities (`heal`, `test`, `enrich` toolchain probes) may add
+`goimports` and `pytest` to this table — same contract: optional, probed at
+runtime, silent degradation when absent.
+
+`doctor` reports which of these are present in the `formatters` / `git`
+checks, so you can see the gap before it matters.
+
+> **For plugin-marketplace and community reviewers:** the Claude Code plugin
+> ships only the `/toolkit` management command and adds **no dependencies of
+> its own** — no bundled binaries, no install scripts, no runtime
+> requirements. It merely drives the `claude-toolkit` binary you already
+> installed. Every external tool in the table above is optional and used only
+> when the hook for that file type actually runs.
+
+---
+
 ## Architecture
 
 ```
 claude-toolkit/
+├── .claude-plugin/
+│   └── plugin.json         Claude Code plugin manifest
+├── commands/
+│   └── toolkit.md          /toolkit slash command (drives manage)
 ├── main.go                  Entry point; delegates to cmd
 ├── cmd/
 │   ├── root.go              Subcommand routing (stdlib flag, zero deps)
 │   ├── run.go               Hook runtime: stdin JSON -> dispatch -> stdout JSON
 │   ├── init.go              Self-installation; derives config from routes
+│   ├── manage.go            Capability toggle UI + subcommands for /toolkit
+│   ├── capabilities.go      Capability enumeration shared by init/manage/doctor
 │   └── doctor.go            Diagnostics and hook self-tests
 ├── pkg/
 │   └── installer/

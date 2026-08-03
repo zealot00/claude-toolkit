@@ -45,8 +45,8 @@ const realWorldSettings = `{
 
 func specs() []Spec {
 	return []Spec{
-		{Event: "PreToolUse", Matcher: "Bash|Write", Command: "claude-toolkit run --event=pre", Timeout: 10},
-		{Event: "SessionStart", Matcher: "*", Command: "claude-toolkit run --event=session", Timeout: 15},
+		{Event: "PreToolUse", Capability: "guard", Matcher: "Bash|Write", Command: "claude-toolkit run --event=pre --cap=guard", Timeout: 10},
+		{Event: "SessionStart", Capability: "enrich", Matcher: "*", Command: "claude-toolkit run --event=session --cap=enrich", Timeout: 15},
 	}
 }
 
@@ -332,10 +332,11 @@ func TestPreservesFileMode(t *testing.T) {
 func TestIsOwned(t *testing.T) {
 	owned := []string{
 		"claude-toolkit run --event=pre",
+		"claude-toolkit run --event=pre --cap=guard",
 		"claude-toolkit run",
-		"/usr/local/bin/claude-toolkit run --event=post",
+		"/usr/local/bin/claude-toolkit run --event=post --cap=format",
 		`"/Users/me/go/bin/claude-toolkit" run --event=session`,
-		`C:\tools\claude-toolkit.exe run --event=pre`,
+		`C:\tools\claude-toolkit.exe run --event=pre --cap=guard`,
 	}
 	for _, c := range owned {
 		if !IsOwned(c) {
@@ -372,10 +373,10 @@ func TestInspect(t *testing.T) {
 	for _, e := range got {
 		byEvent[e.Event] = e
 	}
-	if e := byEvent["PreToolUse"]; e.Matcher != "Bash|Write" || e.Timeout != 10 {
+	if e := byEvent["PreToolUse"]; e.Matcher != "Bash|Write" || e.Timeout != 10 || e.Capability != "guard" {
 		t.Errorf("PreToolUse entry wrong: %+v", e)
 	}
-	if e := byEvent["SessionStart"]; e.Timeout != 15 {
+	if e := byEvent["SessionStart"]; e.Timeout != 15 || e.Capability != "enrich" {
 		t.Errorf("SessionStart entry wrong: %+v", e)
 	}
 }
@@ -387,5 +388,20 @@ func TestInspectMissingFile(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Errorf("want no entries, got %+v", got)
+	}
+}
+
+func TestCapabilityOf(t *testing.T) {
+	cases := map[string]string{
+		"claude-toolkit run --event=pre --cap=guard":                    "guard",
+		`"/usr/local/bin/claude-toolkit" run --event=post --cap=format`: "format",
+		`C:\tools\claude-toolkit.exe run --event=pre --cap=guard`:       "guard",
+		"claude-toolkit run --event=pre":                                "", // legacy, pre-capability
+		"notify-send done":                                              "",
+	}
+	for cmd, want := range cases {
+		if got := CapabilityOf(cmd); got != want {
+			t.Errorf("CapabilityOf(%q) = %q, want %q", cmd, got, want)
+		}
 	}
 }

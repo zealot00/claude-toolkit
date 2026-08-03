@@ -52,15 +52,18 @@ check: lint test ## Everything CI runs
 .PHONY: dist
 dist: ## Cross-compile release archives into ./dist
 	@rm -rf dist && mkdir -p dist
+	@cp -R .claude-plugin dist/ 2>/dev/null || true
+	@cp -R commands dist/ 2>/dev/null || true
 	@for platform in $(PLATFORMS); do \
 		os=$${platform%/*}; arch=$${platform#*/}; \
 		ext=""; [ "$$os" = "windows" ] && ext=".exe"; \
 		echo "  $$os/$$arch"; \
 		GOOS=$$os GOARCH=$$arch go build -trimpath -ldflags '$(LDFLAGS)' \
 			-o dist/$(BINARY)$$ext . || exit 1; \
-		tar -czf dist/$(BINARY)_$${os}_$${arch}.tar.gz -C dist $(BINARY)$$ext; \
+		tar -czf dist/$(BINARY)_$${os}_$${arch}.tar.gz -C dist $(BINARY)$$ext .claude-plugin commands || exit 1; \
 		rm -f dist/$(BINARY)$$ext; \
 	done
+	@rm -rf dist/.claude-plugin dist/commands
 	@cd dist && shasum -a 256 *.tar.gz > checksums.txt
 	@echo "archives in ./dist"
 

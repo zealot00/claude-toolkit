@@ -53,6 +53,8 @@ func Execute(args []string) int {
 		return runCmd(args[1:])
 	case "init":
 		return initCmd(args[1:])
+	case "manage":
+		return manageCmd(args[1:])
 	case "doctor":
 		return doctorCmd(args[1:])
 	case "version", "--version", "-v":
@@ -76,6 +78,7 @@ Usage:
 
 Commands:
   init      Register the toolkit's hooks in ~/.claude/settings.json
+  manage    List, enable or disable hook capabilities (also via /toolkit plugin)
   doctor    Diagnose the installation and self-test every hook
   run       Execute a hook; reads the event JSON on stdin (invoked by Claude Code)
   version   Print version information

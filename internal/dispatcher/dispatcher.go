@@ -7,9 +7,12 @@ package dispatcher
 import (
 	"context"
 	"fmt"
+	"os"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/zealot00/claude-toolkit/internal/payload"
 )
@@ -97,10 +100,28 @@ func (d *Dispatcher) Events() []string {
 	return out
 }
 
+// Matcher returns the settings.json matcher for this route alone: the union
+// of its tool patterns anchored so substring matches (Claude Code uses
+// unanchored JS RegExp.test) cannot leak through. A route that matches every
+// tool collapses to "*".
+func (r *Route) Matcher() string {
+	if len(r.Tools) == 0 {
+		return "*"
+	}
+	seen := map[string]bool{}
+	var tools []string
+	for _, t := range r.Tools {
+		if !seen[t] {
+			seen[t] = true
+			tools = append(tools, t)
+		}
+	}
+	return "^(" + strings.Join(tools, "|") + ")$"
+}
+
 // Matcher returns the settings.json matcher covering every route registered
 // for event: the union of their tool patterns, anchored so substring matches
-// (Claude Code uses unanchored JS RegExp.test) cannot leak through. A route
-// that matches every tool collapses to "*".
+// cannot leak through. A route that matches every tool collapses to "*".
 func (d *Dispatcher) Matcher(event string) string {
 	var tools []string
 	seen := map[string]bool{}
@@ -139,18 +160,31 @@ func (r *Route) matchesTool(tool string) bool {
 	return false
 }
 
-// Dispatch runs every matching handler and merges their responses.
+// Dispatch runs every matching handler and merges their responses. caps
+// narrows execution to routes whose Name appears in the set; empty runs all
+// of them. The settings.json command for a single capability routes through
+// run --cap=<name> so disabling one capability cannot disable its siblings on
+// the same event.
 //
 // Handler errors are collected rather than aborting the run: one broken hook
 // must not suppress the verdict of a working one. The merged response and the
 // joined error are both returned; callers decide how loud to be about the error.
-func (d *Dispatcher) Dispatch(ctx context.Context, e *payload.Event) (*payload.Response, error) {
+func (d *Dispatcher) Dispatch(ctx context.Context, e *payload.Event, caps ...string) (*payload.Response, error) {
+	// cwd: CLAUDE_PROJECT_DIR is the authoritative project root Claude Code
+	// guarantees, while the payload's cwd is empty or stale on events like
+	// SessionEnd. Env wins when present; the payload is the fallback.
+	if env := os.Getenv("CLAUDE_PROJECT_DIR"); env != "" {
+		e.Cwd = env
+	}
 	var (
 		merged *payload.Response
 		errs   []string
 	)
 	for _, r := range d.routes[e.HookEventName] {
 		if !r.matchesTool(e.ToolName) {
+			continue
+		}
+		if len(caps) > 0 && !slices.Contains(caps, r.Name) {
 			continue
 		}
 		resp, err := r.Handler(ctx, e)
@@ -218,6 +252,7 @@ func severity(decision string) int {
 	case payload.DecisionAllow:
 		return 1
 	default:
+		// "defer" and anything unrecognised never override a real verdict.
 		return 0
 	}
 }
@@ -231,4 +266,17 @@ func joinNonEmpty(a, b string) string {
 	default:
 		return a + "\n\n" + b
 	}
+}
+
+// Remaining reports how much time is left before ctx's deadline, and whether
+// a deadline exists at all. Handlers use it to degrade gracefully: when the
+// hook is about to time out, skip expensive work rather than let the whole
+// session wait on it.
+func Remaining(ctx context.Context) (time.Duration, bool) {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return 0, false
+	}
+	left := time.Until(deadline)
+	return left, left > 0
 }

@@ -67,6 +67,18 @@ func Allow(reason string) *Response {
 	}}
 }
 
+// Defer leaves the decision to Claude Code's normal permission flow. Use it
+// when a rule is close but the surrounding context (e.g. a project allowlist)
+// is what should decide. Note that defer has known instability in some Claude
+// Code versions; see DecisionDefer.
+func Defer(reason string) *Response {
+	return &Response{HookSpecificOutput: &HookSpecificOutput{
+		HookEventName:            EventPreToolUse,
+		PermissionDecision:       DecisionDefer,
+		PermissionDecisionReason: reason,
+	}}
+}
+
 // Context injects text into the conversation for the given event without
 // making any allow/deny decision.
 func Context(event, text string) *Response {

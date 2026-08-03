@@ -13,7 +13,10 @@ import (
 )
 
 // Hook event names. Only the events this toolkit handles are enumerated;
-// Event.HookEventName carries whatever Claude Code sent regardless.
+// Event.HookEventName carries whatever Claude Code sent regardless. The last
+// three are reserved: the dispatcher registers no route for them yet, but they
+// exist so future capabilities can reference them without stringly-typed
+// event names.
 const (
 	EventPreToolUse       = "PreToolUse"
 	EventPostToolUse      = "PostToolUse"
@@ -21,6 +24,10 @@ const (
 	EventSessionEnd       = "SessionEnd"
 	EventUserPromptSubmit = "UserPromptSubmit"
 	EventStop             = "Stop"
+
+	EventPostToolUseFailure = "PostToolUseFailure"
+	EventStopFailure        = "StopFailure"
+	EventWorktreeCreate     = "WorktreeCreate"
 )
 
 // Permission decisions valid in HookSpecificOutput.PermissionDecision.
@@ -28,6 +35,11 @@ const (
 	DecisionAllow = "allow"
 	DecisionDeny  = "deny"
 	DecisionAsk   = "ask"
+	// DecisionDefer leaves the verdict to Claude Code's normal permission
+	// flow. It exists in the schema, but some Claude Code versions have bugs
+	// around defer (dropped tool results, hangs under bypassPermissions);
+	// prefer deny/ask unless the default flow is genuinely needed.
+	DecisionDefer = "defer"
 )
 
 // Event is the union of fields Claude Code sends on stdin. Fields absent for a

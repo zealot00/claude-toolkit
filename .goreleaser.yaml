@@ -33,6 +33,10 @@ archives:
     files:
       - README.md
       - LICENSE
+      # The Claude Code plugin ships in every archive so /plugin can be
+      # pointed at an unpacked release without cloning the repo.
+      - .claude-plugin
+      - commands
 
 checksum:
   name_template: checksums.txt
