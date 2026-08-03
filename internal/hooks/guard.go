@@ -125,19 +125,19 @@ var dangerousRoots = map[string]bool{
 // secretFiles are credential stores. Reading one into a network sink is
 // exfiltration; writing one is usually a mistake.
 var secretPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(^|/)\.ssh/id_[\w]+$`),
-	regexp.MustCompile(`(^|/)\.aws/credentials$`),
-	regexp.MustCompile(`(^|/)\.netrc$`),
-	regexp.MustCompile(`(^|/)\.npmrc$`),
-	regexp.MustCompile(`(^|/)id_(rsa|dsa|ecdsa|ed25519)$`),
-	regexp.MustCompile(`(^|/)\.claude/settings\.json$`),
-	regexp.MustCompile(`(^|/)\.env(\.[\w.]+)?$`),
-	regexp.MustCompile(`(^|/)\.git-credentials$`),
+	regexp.MustCompile(`(^|[/\\])\.ssh/id_[\w]+$`),
+	regexp.MustCompile(`(^|[/\\])\.aws/credentials$`),
+	regexp.MustCompile(`(^|[/\\])\.netrc$`),
+	regexp.MustCompile(`(^|[/\\])\.npmrc$`),
+	regexp.MustCompile(`(^|[/\\])id_(rsa|dsa|ecdsa|ed25519)$`),
+	regexp.MustCompile(`(^|[/\\])\.claude/settings\.json$`),
+	regexp.MustCompile(`(^|[/\\])\.env(\.[\w.]+)?$`),
+	regexp.MustCompile(`(^|[/\\])\.git-credentials$`),
 	regexp.MustCompile(`\.(pem|p12|pfx|keystore)$`),
 }
 
 func isSecretPath(p string) bool {
-	p = strings.Trim(p, `"'`)
+	p = strings.ReplaceAll(strings.Trim(p, `"'`), `\`, "/")
 	for _, re := range secretPatterns {
 		if re.MatchString(p) {
 			return true
@@ -549,7 +549,10 @@ func checkPath(p string) []finding {
 		return nil
 	}
 	// Private keys and cloud credentials are never a legitimate edit target.
-	base := path.Base(p)
+	// Normalize separators first so Windows paths (C:\Users\...) hit the same
+	// verdicts as POSIX ones. filepath.ToSlash does NOT do this on POSIX hosts
+	// (backslash is not a separator there), so replace it manually.
+	base := path.Base(strings.ReplaceAll(p, `\`, "/"))
 	if strings.HasPrefix(base, "id_") || base == "credentials" || base == ".netrc" || base == ".git-credentials" {
 		return []finding{{"write-to-secret", payload.DecisionDeny,
 			fmt.Sprintf("%s holds private credentials and must not be written by an agent", p)}}

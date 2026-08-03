@@ -160,8 +160,9 @@ guard       PreToolUse                      ^(Bash|Write|Edit|NotebookEdit)$  en
 heal        PostToolUse                     ^(Write|Edit|NotebookEdit)$       enabled
 loopguard   PreToolUse, PostToolUse         ^(Bash)$                          enabled
 notify      PreToolUse, PostToolUse         *                                 enabled
+envfix      PreToolUse                      ^(Bash)$                          enabled
 
-6 capability(ies), 6 enabled, 0 disabled.
+7 capability(ies), 7 enabled, 0 disabled.
 ```
 
 ```sh

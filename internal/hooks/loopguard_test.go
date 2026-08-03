@@ -171,6 +171,7 @@ func TestParseExitCodeVariants(t *testing.T) {
 	}{
 		{"exit_code", json.RawMessage(`{"exit_code":1}`), 1, true},
 		{"exitCode", json.RawMessage(`{"exitCode":2}`), 2, true},
+		{"ExitCode", json.RawMessage(`{"ExitCode":3}`), 3, true},
 		{"float exit_code", json.RawMessage(`{"exit_code":1.0}`), 1, true},
 		{"interrupted", json.RawMessage(`{"interrupted":true}`), 130, true},
 		{"missing", json.RawMessage(`{"stdout":"x"}`), 0, false},

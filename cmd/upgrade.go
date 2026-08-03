@@ -1,11 +1,18 @@
 package cmd
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
+	"crypto/sha256"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -58,10 +65,127 @@ func upgradeCmd(args []string) int {
 		return 0
 	}
 
-	fmt.Println("Run the official installer to update:")
-	fmt.Printf("  curl -fsSL https://raw.githubusercontent.com/%s/main/scripts/install.sh | bash\n", repo)
-	fmt.Println("(in-place binary replacement is left to the installer, which verifies checksums)")
+	if err := doUpgrade(repo, latest.TagName); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		fmt.Println("Fall back to the official installer:")
+		fmt.Printf("  curl -fsSL https://raw.githubusercontent.com/%s/main/scripts/install.sh | bash\n", repo)
+		return 1
+	}
+	fmt.Println("Upgraded successfully. Restart Claude Code for the new hooks to load.")
 	return 0
+}
+
+// doUpgrade downloads the release archive for the current platform, verifies
+// its SHA-256 against the published checksums.txt, extracts the binary, and
+// atomically replaces the running executable. On Windows the running exe
+// cannot be overwritten, so it reports instructions instead of failing hard.
+func doUpgrade(repo, tag string) error {
+	platform := runtime.GOOS + "_" + runtime.GOARCH
+	archive := "claude-toolkit_" + platform + ".tar.gz"
+	baseURL := "https://github.com/" + repo + "/releases/download/" + tag
+
+	client := &http.Client{Timeout: 60 * time.Second}
+
+	data, err := downloadAndVerify(client, baseURL, archive)
+	if err != nil {
+		return err
+	}
+
+	// Extract the single binary from the tar.gz.
+	gz, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("open archive: %w", err)
+	}
+	defer gz.Close()
+	tr := tar.NewReader(gz)
+	var binData []byte
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("read archive: %w", err)
+		}
+		if hdr.Typeflag == tar.TypeReg && filepath.Base(hdr.Name) == "claude-toolkit" {
+			binData, err = io.ReadAll(tr)
+			if err != nil {
+				return fmt.Errorf("extract binary: %w", err)
+			}
+			break
+		}
+	}
+	if len(binData) == 0 {
+		return fmt.Errorf("archive %s contains no claude-toolkit binary", archive)
+	}
+
+	self, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("locate current binary: %w", err)
+	}
+	if runtime.GOOS == "windows" {
+		return fmt.Errorf("cannot replace a running .exe on Windows; run the official installer instead")
+	}
+	if err := os.WriteFile(self+".new", binData, 0o755); err != nil {
+		return fmt.Errorf("write staging binary: %w", err)
+	}
+	if err := os.Rename(self+".new", self); err != nil {
+		os.Remove(self + ".new")
+		return fmt.Errorf("replace binary: %w", err)
+	}
+	return nil
+}
+
+// downloadAndVerify fetches the archive and checksums.txt and returns the
+// archive bytes after confirming its SHA-256 matches the published checksum.
+func downloadAndVerify(client *http.Client, baseURL, archive string) ([]byte, error) {
+	archiveURL := baseURL + "/" + archive
+	resp, err := client.Get(archiveURL)
+	if err != nil {
+		return nil, fmt.Errorf("download %s: %w", archive, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("download %s: %s", archive, resp.Status)
+	}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", archive, err)
+	}
+
+	sumsResp, err := client.Get(baseURL + "/checksums.txt")
+	if err != nil {
+		return nil, fmt.Errorf("download checksums.txt: %w", err)
+	}
+	defer sumsResp.Body.Close()
+	if sumsResp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("download checksums.txt: %s", sumsResp.Status)
+	}
+	sums, err := io.ReadAll(sumsResp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read checksums.txt: %w", err)
+	}
+
+	expected := checksumFor(sums, archive)
+	if expected == "" {
+		return nil, fmt.Errorf("no checksum published for %s; refusing to install an unverified binary", archive)
+	}
+	actual := fmt.Sprintf("%x", sha256.Sum256(data))
+	if actual != expected {
+		return nil, fmt.Errorf("checksum mismatch for %s\n  expected %s\n  actual   %s", archive, expected, actual)
+	}
+	return data, nil
+}
+
+// checksumFor extracts the sha256 for name from a checksums.txt body.
+func checksumFor(sums []byte, name string) string {
+	for _, line := range strings.Split(string(sums), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && (fields[1] == name || fields[1] == "*"+name) {
+			return fields[0]
+		}
+	}
+	return ""
 }
 
 // fetchLatestRelease queries the GitHub Releases API for the latest tag.

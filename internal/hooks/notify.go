@@ -58,6 +58,10 @@ var notifySend = func(title, message string) {
 		_ = exec.Command("osascript", "-e", script).Run()
 	case "linux":
 		_ = exec.Command("notify-send", title, msg).Run()
+	case "windows":
+		// msg broadcasts to the interactive session and ships with Windows;
+		// /TIME:5 avoids a hang waiting for acknowledgment.
+		_ = exec.Command("msg", "*", "/TIME:5", title+" - "+msg).Run()
 	}
 	// Terminal bell on stderr: hook stdout must stay pure JSON.
 	fmt.Fprint(os.Stderr, "\a")

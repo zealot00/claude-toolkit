@@ -23,6 +23,7 @@ more events; each has its own `manage` switch):
 | `heal` | PostToolUse | Points Claude at `claude-toolkit test <file>` when tests cover it |
 | `enrich` | SessionStart, UserPromptSubmit | Injects git / toolchain / working-tree state |
 | `notify` | PreToolUse + PostToolUse | Desktop notification for slow or failed calls (opt-in via `CLAUDE_TOOLKIT_NOTIFY`) |
+| `envfix` | PreToolUse | Rewrites bare interpreter calls to the project's `.venv` when one exists |
 
 ## What to do
 

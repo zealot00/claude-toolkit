@@ -139,7 +139,7 @@ func parseExitCode(toolResponse json.RawMessage) (int, bool) {
 	if err := json.Unmarshal(toolResponse, &m); err != nil {
 		return 0, false
 	}
-	for _, key := range []string{"exit_code", "exitCode", "exitcode"} {
+	for _, key := range []string{"exit_code", "exitCode", "exitcode", "ExitCode"} {
 		if raw, ok := m[key]; ok {
 			var n int
 			if err := json.Unmarshal(raw, &n); err == nil {

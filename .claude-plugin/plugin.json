@@ -1,7 +1,7 @@
 {
   "name": "claude-toolkit",
   "version": "0.1.0",
-  "description": "Manage claude-toolkit hook capabilities (guard, loopguard, format, heal, enrich, notify) from inside Claude Code",
+  "description": "Manage claude-toolkit hook capabilities (guard, loopguard, format, heal, enrich, notify, envfix) from inside Claude Code",
   "author": {
     "name": "zealot00"
   },

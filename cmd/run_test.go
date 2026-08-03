@@ -200,6 +200,7 @@ func TestBuildSpecsMatchesRoutes(t *testing.T) {
 		"enrich":    {"SessionStart", "UserPromptSubmit"},
 		"loopguard": {"PreToolUse", "PostToolUse"},
 		"notify":    {"PreToolUse", "PostToolUse"},
+		"envfix":    {"PreToolUse"},
 	}
 	covered := map[string][]string{}
 	for _, s := range specs {

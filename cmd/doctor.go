@@ -302,6 +302,25 @@ func checkSelfTest(rp *report) {
 		{"allows rm -rf ./build", bashEvent("rm -rf ./build"), ""},
 		{"allows git push", bashEvent("git push origin main"), ""},
 		{"allows npm test", bashEvent("npm test && npm run lint"), ""},
+		// Non-Bash rules: these used to be covered only by unit tests, so a
+		// regression would slip past doctor. Run them here end to end.
+		{"blocks secret in write", writeEvent("/tmp/creds.txt", "key=\"sk-QwErTyUiOpAsDfGhJkLzXcVbNm1234567890\"\n"), payload.DecisionDeny},
+		{"blocks ssh key write", writeEvent("/Users/me/.ssh/id_rsa", "x"), payload.DecisionDeny},
+		{"asks on log dump", bashEvent("cat /var/log/syslog"), payload.DecisionAsk},
+	}
+
+	// Branch protection needs a real git repo; skip the case when git is not
+	// available rather than failing the whole self-test. The repo must survive
+	// until dispatch runs, so removal is deferred to the end of the check.
+	if dir, ok := tempGitRepoMain(); ok {
+		defer os.RemoveAll(dir)
+		ev := bashEvent("git commit -m 'wip'")
+		ev.Cwd = dir
+		cases = append(cases, struct {
+			name  string
+			event payload.Event
+			want  string
+		}{"asks on protected branch", ev, payload.DecisionAsk})
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -353,6 +372,39 @@ func bashEvent(command string) payload.Event {
 		ToolName:      "Bash",
 		ToolInput:     in,
 	}
+}
+
+// writeEvent builds a Write event carrying file content, for the
+// high-entropy-secret and write-to-secret self-test cases.
+func writeEvent(path, content string) payload.Event {
+	in, _ := json.Marshal(map[string]string{"file_path": path, "content": content})
+	return payload.Event{
+		HookEventName: payload.EventPreToolUse,
+		ToolName:      "Write",
+		ToolInput:     in,
+	}
+}
+
+// tempGitRepoMain creates a throwaway git repo on branch main, for the branch
+// protection self-test. ok=false when git is unavailable.
+func tempGitRepoMain() (string, bool) {
+	dir, err := os.MkdirTemp("", "ctk-selftest-*")
+	if err != nil {
+		return "", false
+	}
+	git := func(args ...string) bool {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL="+os.DevNull)
+		return cmd.Run() == nil
+	}
+	if !git("init", "-q", "-b", "main") {
+		os.RemoveAll(dir)
+		return "", false
+	}
+	git("config", "user.email", "selftest@example.com")
+	git("config", "user.name", "selftest")
+	return dir, true
 }
 
 // checkCwdEnvFallback proves the cwd override: an event whose payload carries

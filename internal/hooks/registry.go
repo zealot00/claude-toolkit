@@ -16,5 +16,6 @@ func Register() *dispatcher.Dispatcher {
 	d.Register(Heal())
 	d.Register(LoopGuard())
 	d.Register(Notifier())
+	d.Register(EnvFix())
 	return d
 }

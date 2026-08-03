@@ -79,6 +79,27 @@ func Defer(reason string) *Response {
 	}}
 }
 
+// AllowWithRewrite approves a PreToolUse call while replacing its tool_input
+// via updatedInput -- the most powerful PreToolUse capability: rewrite the
+// command instead of just vetoing it. updatedInput must be the same shape as
+// the tool's tool_input (e.g. BashInput).
+//
+// Note: some Claude Code versions (<= 2.1.220) silently drop updatedInput on
+// Bash (#79321/#81340). If that happens, the command runs unmodified rather
+// than failing, which is the fail-open outcome.
+func AllowWithRewrite(reason string, updatedInput any) *Response {
+	raw, err := json.Marshal(updatedInput)
+	if err != nil {
+		return Allow(reason) // could not encode the rewrite; approve untouched
+	}
+	return &Response{HookSpecificOutput: &HookSpecificOutput{
+		HookEventName:            EventPreToolUse,
+		PermissionDecision:       DecisionAllow,
+		PermissionDecisionReason: reason,
+		UpdatedInput:             raw,
+	}}
+}
+
 // Context injects text into the conversation for the given event without
 // making any allow/deny decision.
 func Context(event, text string) *Response {

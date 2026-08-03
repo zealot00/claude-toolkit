@@ -96,6 +96,8 @@ func TestGuardFileWrites(t *testing.T) {
 		want string
 	}{
 		{"private key", "/Users/me/.ssh/id_rsa", payload.DecisionDeny},
+		{"windows private key", `C:\Users\me\.ssh\id_rsa`, payload.DecisionDeny},
+		{"windows aws creds", `C:\Users\me\.aws\credentials`, payload.DecisionDeny},
 		{"ed25519 key", "/Users/me/.ssh/id_ed25519", payload.DecisionDeny},
 		{"aws credentials", "/Users/me/.aws/credentials", payload.DecisionDeny},
 		{"netrc", "/Users/me/.netrc", payload.DecisionDeny},
