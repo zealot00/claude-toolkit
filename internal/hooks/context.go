@@ -3,6 +3,7 @@ package hooks
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -12,18 +13,18 @@ import (
 	"github.com/zealot00/claude-toolkit/internal/payload"
 )
 
-// SessionContext is the "enrich" capability. It injects the repository's
-// current state into the conversation at session start so Claude opens every
-// session knowing which branch it is on and what is already uncommitted,
-// instead of wasting its first tool calls rediscovering that.
+// SessionContext is the "enrich" capability. On SessionStart it injects the
+// repository's current state (branch, divergence, dirty files, recent
+// commits, toolchain) into the conversation so Claude opens every session
+// knowing where it is. On UserPromptSubmit it re-injects a one-line cwd/dirty
+// reminder, so a long session notices when the working tree drifts.
 //
-// The capability may eventually fire on UserPromptSubmit as well; routing is
-// declared by the Events field so adding a second event does not require a
-// second registration.
+// Everything here is read-only and failure-tolerant: missing git or toolchain
+// simply means less context.
 func SessionContext() *dispatcher.Route {
 	return &dispatcher.Route{
 		Name:    "enrich",
-		Events:  []string{payload.EventSessionStart},
+		Events:  []string{payload.EventSessionStart, payload.EventUserPromptSubmit},
 		Handler: sessionContext,
 	}
 }
@@ -50,6 +51,16 @@ func sessionContext(ctx context.Context, e *payload.Event) (*payload.Response, e
 	if left, ok := dispatcher.Remaining(ctx); ok && left < minRemaining {
 		return nil, nil // not enough time; missing context beats a hung session
 	}
+
+	// UserPromptSubmit gets a one-line reminder, not the full dump.
+	if e.HookEventName == payload.EventUserPromptSubmit {
+		line := fmt.Sprintf("## cwd: %s", dir)
+		if status := git(ctx, dir, "status", "--porcelain"); status != "" {
+			line += fmt.Sprintf(" | %d uncommitted file(s)", len(strings.Split(status, "\n")))
+		}
+		return payload.Context(e.HookEventName, line), nil
+	}
+
 	if !inGitRepo(ctx, dir) {
 		return nil, nil
 	}
@@ -87,8 +98,58 @@ func sessionContext(ctx context.Context, e *payload.Event) (*payload.Response, e
 		}
 	}
 
+	if tc := toolchainLine(ctx); tc != "" {
+		b.WriteString(tc)
+	}
+
 	out := strings.TrimRight(b.String(), "\n")
 	return payload.Context(payload.EventSessionStart, truncateContext(out, maxContextLen)), nil
+}
+
+// toolchainLine reports the active Go/Python/Node toolchain and venv, or ""
+// when none is detectable. Version probes are best-effort and skipped when
+// the hook is running low on time.
+func toolchainLine(ctx context.Context) string {
+	if left, ok := dispatcher.Remaining(ctx); ok && left < 5*time.Second {
+		return "" // not enough budget left for three version probes
+	}
+	var parts []string
+	if v := toolVersion(ctx, "go", "version"); v != "" {
+		parts = append(parts, "Go "+v)
+	}
+	if v := toolVersion(ctx, "python3", "--version"); v != "" {
+		parts = append(parts, "Python "+v)
+	} else if v := toolVersion(ctx, "python", "--version"); v != "" {
+		parts = append(parts, "Python "+v)
+	}
+	if v := toolVersion(ctx, "node", "--version"); v != "" {
+		parts = append(parts, "Node "+v)
+	}
+	if venv := os.Getenv("VIRTUAL_ENV"); venv != "" {
+		parts = append(parts, "venv "+venv)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "- Toolchain: " + strings.Join(parts, ", ") + "\n"
+}
+
+// toolVersion runs a version probe and returns the first line, or "".
+func toolVersion(ctx context.Context, name string, args ...string) string {
+	cmd := exec.CommandContext(ctx, name, args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return ""
+	}
+	line := strings.TrimSpace(strings.SplitN(string(out), "\n", 2)[0])
+	// go version prints "go version go1.25.11 ..."; python --version writes
+	// to stderr with a "Python " prefix. Strip both so the line is the bare
+	// version.
+	line = strings.TrimPrefix(line, "go version ")
+	if v, ok := strings.CutPrefix(line, "Python "); ok {
+		return v
+	}
+	return line
 }
 
 // truncateContext trims s to limit bytes, appending an ellipsis so the

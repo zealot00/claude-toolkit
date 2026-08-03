@@ -172,16 +172,19 @@ func BuildPlan(path string, specs []Spec) (*Plan, error) {
 		}
 		kept, evicted := stripOwned(groups)
 
-		var spec *Spec
+		// Append every spec for this event: two capabilities (e.g. format and
+		// heal on PostToolUse) each get their own matcher group so they can be
+		// enabled or disabled independently.
+		var matched bool
 		for i := range specs {
-			if specs[i].Event == ev {
-				spec = &specs[i]
-				break
+			if specs[i].Event != ev {
+				continue
 			}
+			matched = true
+			kept = append(kept, group(specs[i]))
 		}
 
-		if spec != nil {
-			kept = append(kept, group(*spec))
+		if matched {
 			if evicted > 0 {
 				p.Replaced = append(p.Replaced, ev)
 			} else {

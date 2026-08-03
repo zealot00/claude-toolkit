@@ -13,5 +13,8 @@ func Register() *dispatcher.Dispatcher {
 	d.Register(Guard())
 	d.Register(SessionContext())
 	d.Register(Formatter())
+	d.Register(Heal())
+	d.Register(LoopGuard())
+	d.Register(Notifier())
 	return d
 }

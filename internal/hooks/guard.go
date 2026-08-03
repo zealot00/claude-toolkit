@@ -3,7 +3,11 @@ package hooks
 import (
 	"context"
 	"fmt"
+	"math"
+	"os"
+	"os/exec"
 	"path"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -29,19 +33,31 @@ func Guard() *dispatcher.Route {
 	}
 }
 
-func guard(_ context.Context, e *payload.Event) (*payload.Response, error) {
+func guard(ctx context.Context, e *payload.Event) (*payload.Response, error) {
 	if e.ToolName == "Bash" {
 		in, err := e.Bash()
 		if err != nil {
 			return nil, err
 		}
-		return decide(checkBash(in.Command)), nil
+		fs := checkBash(in.Command)
+		if gitWriteToProtectedBranch(ctx, e.Cwd, in.Command) {
+			fs = append(fs, finding{"protected-branch", payload.DecisionAsk,
+				"this repository's current branch is protected; a write here may bypass review"})
+		}
+		return decide(fs), nil
 	}
 	in, err := e.File()
 	if err != nil {
 		return nil, err
 	}
-	return decide(checkPath(in.Path())), nil
+	fs := checkPath(in.Path())
+	if in.Content != "" {
+		fs = append(fs, checkContent(in.Content)...)
+	}
+	if in.NewString != "" {
+		fs = append(fs, checkContent(in.NewString)...)
+	}
+	return decide(fs), nil
 }
 
 // finding is one rule match.
@@ -247,6 +263,13 @@ func checkBash(cmd string) []finding {
 			continue
 		}
 
+		// Reading an unbounded log stream dumps megabytes into the transcript.
+		// Offer the bounded alternative instead of blocking outright.
+		if isLogDump(b, operands) {
+			fs = append(fs, finding{"log-dump", payload.DecisionAsk,
+				fmt.Sprintf("%s may stream a huge log; use a bounded view (e.g. tail -100, journalctl --since=10m) instead", b)})
+		}
+
 		switch {
 		case b == "rm" && isRecursiveForce(operands):
 			for _, t := range operandsOnly(operands) {
@@ -278,6 +301,10 @@ func checkBash(cmd string) []finding {
 						fmt.Sprintf("recursively making %s world-writable breaks system security", t)})
 				}
 			}
+
+		case b == "git" && contains(operands, "reset") && contains(operands, "--hard"):
+			fs = append(fs, finding{"git-reset-hard", payload.DecisionDeny,
+				"git reset --hard discards uncommitted work and cannot be undone"})
 
 		case b == "git" && contains(operands, "push") && forcePush(operands):
 			fs = append(fs, finding{"git-force-push", payload.DecisionAsk,
@@ -312,6 +339,174 @@ func isHarmlessDevice(p string) bool {
 		return true
 	}
 	return false
+}
+
+// secretPatterns match credential-shaped strings. Entropy is judged on the
+// token's variable body (submatch bodyIndex), not the fixed prefix (AKIA,
+// ghp_, sk-...) which dilutes it. The gate is per-pattern because the body
+// length caps achievable entropy: 16 distinct characters max out at 4.0
+// bits/char, so an AWS key can never reach a 4.5 gate that a 36-character
+// GitHub token clears easily. PEM markers are declarations, not random
+// material, so they bypass the entropy gate entirely.
+type secretPattern struct {
+	re         *regexp.Regexp
+	bodyIndex  int // submatch index of the variable part; 0 = whole match
+	minEntropy float64
+}
+
+var secretTokenPatterns = []secretPattern{
+	{regexp.MustCompile(`AKIA([0-9A-Z]{16})`), 1, 3.5},
+	{regexp.MustCompile(`gh[pousr]_([A-Za-z0-9]{20,})`), 1, 4.5},
+	{regexp.MustCompile(`sk-([A-Za-z0-9]{20,})`), 1, 4.5},
+	{regexp.MustCompile(`xox[baprs]-([A-Za-z0-9-]{10,})`), 1, 4.5},
+	{regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----`), 0, 0},
+}
+
+// checkContent scans Write/Edit content for credential-shaped tokens with
+// high entropy, denying the write so a real secret cannot be committed.
+func checkContent(content string) []finding {
+	if content == "" {
+		return nil
+	}
+	var fs []finding
+	seen := map[string]bool{}
+	for _, pat := range secretTokenPatterns {
+		for _, m := range pat.re.FindAllStringSubmatch(content, -1) {
+			whole := m[0]
+			if seen[whole] {
+				continue
+			}
+			seen[whole] = true
+
+			body := whole
+			if pat.bodyIndex > 0 && pat.bodyIndex < len(m) {
+				body = m[pat.bodyIndex]
+			}
+			if len(body) < 12 {
+				continue
+			}
+			h := shannonEntropy(body)
+			if pat.minEntropy > 0 && h < pat.minEntropy {
+				continue
+			}
+			fs = append(fs, finding{"high-entropy-secret", payload.DecisionDeny,
+				fmt.Sprintf("content contains a credential-shaped token (%s, entropy %.2f); confirm this is not a real secret before writing it", maskToken(whole), h)})
+		}
+	}
+	return fs
+}
+
+// shannonEntropy computes the per-character Shannon entropy of s.
+func shannonEntropy(s string) float64 {
+	if s == "" {
+		return 0
+	}
+	counts := make([]int, 256)
+	for i := 0; i < len(s); i++ {
+		counts[s[i]]++
+	}
+	var h float64
+	for _, c := range counts {
+		if c == 0 {
+			continue
+		}
+		p := float64(c) / float64(len(s))
+		h -= p * math.Log2(p)
+	}
+	return h
+}
+
+// maskToken shows only the head and tail of a suspected secret in messages.
+func maskToken(s string) string {
+	if len(s) <= 8 {
+		return "***"
+	}
+	return s[:4] + "..." + s[len(s)-4:]
+}
+
+// isLogDump reports a command that can stream unbounded log output: cat of a
+// log path, journalctl without a time/line bound, or kubectl logs.
+func isLogDump(b string, operands []string) bool {
+	switch b {
+	case "cat", "less", "more", "zcat":
+		for _, o := range operandsOnly(operands) {
+			if strings.Contains(o, "/var/log/") || strings.HasSuffix(o, ".log") {
+				return true
+			}
+		}
+	case "journalctl":
+		for _, o := range operands {
+			if strings.HasPrefix(o, "--since") || o == "-S" || strings.HasPrefix(o, "--lines") || o == "-n" {
+				return false
+			}
+		}
+		return true
+	case "kubectl":
+		return contains(operands, "logs")
+	}
+	return false
+}
+
+// protectedBranches are the branch names a guard prompt should appear for.
+var protectedBranches = []string{"main", "master", "release", "production"}
+
+// gitWriteToProtectedBranch reports whether cmd is a git commit/push on the
+// repo's current branch while that branch is protected (unless the project
+// opts out with a .claude-toolkit-allow marker).
+func gitWriteToProtectedBranch(ctx context.Context, dir, cmd string) bool {
+	if !isGitWrite(cmd) {
+		return false
+	}
+	if branchAllowedByWhitelist(dir) {
+		return false
+	}
+	branch := currentBranch(ctx, dir)
+	for _, b := range protectedBranches {
+		if branch == b || strings.HasPrefix(branch, b+"/") || strings.HasPrefix(branch, "release/") {
+			return true
+		}
+	}
+	return false
+}
+
+// isGitWrite reports whether cmd is a git commit or push.
+func isGitWrite(cmd string) bool {
+	for _, s := range tokenize(cmd) {
+		b, operands, ok := s.base()
+		if ok && b == "git" && (contains(operands, "commit") || contains(operands, "push")) {
+			return true
+		}
+	}
+	return false
+}
+
+// branchAllowedByWhitelist walks up from dir looking for a
+// .claude-toolkit-allow marker that opts the project out of branch guards.
+func branchAllowedByWhitelist(dir string) bool {
+	for d := dir; d != ""; {
+		if _, err := os.Stat(filepath.Join(d, ".claude-toolkit-allow")); err == nil {
+			return true
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			break
+		}
+		d = parent
+	}
+	return false
+}
+
+func currentBranch(ctx context.Context, dir string) string {
+	if dir == "" {
+		return ""
+	}
+	cmd := exec.CommandContext(ctx, "git", "branch", "--show-current")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func containsMode(operands []string, modes ...string) bool {

@@ -170,6 +170,18 @@ claude-toolkit manage disable-all
 
 Run bare (`claude-toolkit manage`) for an interactive toggle UI in the terminal. Every write backs up your settings file and merges, exactly like `init` — and like `init`, the change only takes effect after you restart Claude Code. `--dry-run` shows the change without writing.
 
+### 5. Other commands
+
+| Command | What it does |
+|---|---|
+| `test <file.go\|file.py>` | Runs the incremental tests covering a file (`go test` / `pytest`), output truncated to 35 lines |
+| `ast <file>` | Prints a compressed JSON structural summary (signatures, no bodies) |
+| `rules` | Lists every built-in rule and its verdict |
+| `proxy` | Optional local API proxy with 429 auto-retry (opt-in, not auto-wired) |
+| `upgrade [--check-only]` | Checks GitHub Releases for a newer version |
+| `uninstall [--purge-config]` | Removes the toolkit's hooks (alias of `init --uninstall`) |
+| `log [--follow] [--event=…]` | Tails the debug log written under `CLAUDE_TOOLKIT_DEBUG` |
+
 ---
 
 ## The Claude Code plugin
@@ -191,8 +203,11 @@ The plugin deliberately registers **no hooks of its own**. The hooks it manages 
 | Capability | Event | What it does |
 |---|---|---|
 | `guard` | PreToolUse | blocks destructive / exfiltrating shell commands |
+| `loopguard` | Pre+PostToolUse | blocks a Bash command that keeps failing (3+ consecutive) |
 | `format` | PostToolUse | runs the project formatter after Claude writes a file |
-| `enrich` | SessionStart | injects git branch and working-tree state |
+| `heal` | PostToolUse | points Claude at `claude-toolkit test` when tests cover the file |
+| `enrich` | SessionStart, UserPromptSubmit | injects git / toolchain / working-tree state |
+| `notify` | Pre+PostToolUse | desktop notification for slow or failed calls (opt-in) |
 
 ---
 
@@ -212,6 +227,10 @@ Blocks irreversible and exfiltrating commands before Claude runs them.
 | `block-device-write` | deny | `> /dev/disk0` |
 | `fork-bomb` | deny | `:(){ :\|:& };:` |
 | `write-to-secret` | deny | Writing `~/.ssh/id_*`, `~/.aws/credentials`, `.netrc` |
+| `git-reset-hard` | deny | `git reset --hard` discards uncommitted work |
+| `high-entropy-secret` | deny | A credential-shaped token (AKIA/ghp_/sk-/PEM) in Write/Edit content |
+| `protected-branch` | ask | `git commit`/`push` on `main`/`master`/`release/*` (opt out: `.claude-toolkit-allow`) |
+| `log-dump` | ask | `cat` of log paths, unbounded `journalctl`, `kubectl logs` — suggests a bounded view |
 | `git-force-push` | ask | `git push --force` (but not `--force-with-lease`) |
 | `power-state` | ask | `shutdown`, `reboot`, `halt` |
 | `write-to-secret` | ask | Writing `.env`, `.npmrc`, `*.pem`, `~/.claude/settings.json` |
@@ -229,6 +248,18 @@ Injects the repo's current state at session start: branch, divergence from upstr
 Runs the project's formatter after Claude writes a file — `gofmt`, `prettier`, `ruff`/`black`, `rustfmt`, `shfmt`, picked by extension and skipped when the tool is not installed. `prettier` is resolved from the nearest `node_modules/.bin` first, so the project's pinned version wins. See [Dependencies](#dependencies) for the full list of optional tools and what happens when one is missing.
 
 The point is not tidiness. When a formatter rewrites a file, Claude's in-context copy goes stale and its next `Edit` fails on a string that no longer matches. So the hook speaks up **only when the file actually changed**, telling Claude to re-read. If the formatter fails outright, that usually means Claude just wrote code that does not parse — which it is also told.
+
+### PostToolUse — heal (incremental tests)
+
+After Claude writes a `.go`/`.py` file that has tests (a sibling `*_test.go` or a `test_*.py`), the hook tells Claude to run them with `claude-toolkit test <file>`. The hook only *detects* — it never runs the tests itself, because a hook's ~60s timeout would kill a real test run. The standalone command maps the file to `go test -count=1 [-run …]` or `pytest … --maxfail=1 --tb=short` and truncates output to 35 lines.
+
+### PreToolUse+PostToolUse — loopguard
+
+A Bash command that fails three times in a row (exit code ≠ 0, recorded on PostToolUse) is blocked on the next attempt with a diagnostic. Any success resets the count. The ledger lives in `~/.claude-toolkit/state/`, not `/tmp`.
+
+### PreToolUse+PostToolUse — notify (opt-in)
+
+Set `CLAUDE_TOOLKIT_NOTIFY=<seconds>` to get an OS desktop notification (macOS `osascript` / Linux `notify-send`) plus a terminal bell when a tool call runs longer than that or fails. Off by default.
 
 ---
 
@@ -311,10 +342,7 @@ session.
 | `prettier` | `format` (js/ts/json/css/html/md/…) | format web & config files (project-local `node_modules/.bin` first) | those extensions are not formatted |
 | `ruff` | `format` (`.py`) | format and fix Python | falls back to `black` |
 | `black` | `format` (`.py`) | format Python | `.py` files are not formatted |
-
-Planned capabilities (`heal`, `test`, `enrich` toolchain probes) may add
-`goimports` and `pytest` to this table — same contract: optional, probed at
-runtime, silent degradation when absent.
+| `pytest` | `test` (`.py`) | run incremental Python tests | `claude-toolkit test` reports the gap |
 
 `doctor` reports which of these are present in the `formatters` / `git`
 checks, so you can see the gap before it matters.

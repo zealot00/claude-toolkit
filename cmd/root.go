@@ -55,6 +55,20 @@ func Execute(args []string) int {
 		return initCmd(args[1:])
 	case "manage":
 		return manageCmd(args[1:])
+	case "test":
+		return testCmd(args[1:])
+	case "ast":
+		return astCmd(args[1:])
+	case "rules":
+		return rulesCmd(args[1:])
+	case "proxy":
+		return proxyCmd(args[1:])
+	case "upgrade":
+		return upgradeCmd(args[1:])
+	case "uninstall":
+		return uninstallCmd(args[1:])
+	case "log":
+		return logCmd(args[1:])
 	case "doctor":
 		return doctorCmd(args[1:])
 	case "version", "--version", "-v":
@@ -79,6 +93,13 @@ Usage:
 Commands:
   init      Register the toolkit's hooks in ~/.claude/settings.json
   manage    List, enable or disable hook capabilities (also via /toolkit plugin)
+  test      Run incremental tests covering a source file (go test / pytest)
+  ast       Print a compressed structural summary of a .go/.py file
+  rules     List every built-in rule and its verdict
+  proxy     Run the optional local API proxy (429 auto-retry; opt-in)
+  upgrade   Check for and install a newer release
+  uninstall Remove the toolkit's hooks (--purge-config also deletes state)
+  log       Tail the debug log written when CLAUDE_TOOLKIT_DEBUG is set
   doctor    Diagnose the installation and self-test every hook
   run       Execute a hook; reads the event JSON on stdin (invoked by Claude Code)
   version   Print version information

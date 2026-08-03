@@ -16,9 +16,10 @@ import (
 // and must stay imperceptible; PostToolUse may shell out to a formatter on a
 // cold cache and needs room.
 var hookTimeouts = map[string]int{
-	payload.EventPreToolUse:   10,
-	payload.EventPostToolUse:  30,
-	payload.EventSessionStart: 15,
+	payload.EventPreToolUse:       10,
+	payload.EventPostToolUse:      30,
+	payload.EventSessionStart:     15,
+	payload.EventUserPromptSubmit: 5,
 }
 
 // buildSpecs derives the settings.json entries from the routes the binary

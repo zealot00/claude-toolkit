@@ -391,6 +391,56 @@ func TestInspectMissingFile(t *testing.T) {
 	}
 }
 
+// TestMultipleCapabilitiesSameEvent pins the case where two capabilities
+// (format, heal) share one event: each must get its own matcher group, so
+// disabling one does not take down the other.
+func TestMultipleCapabilitiesSameEvent(t *testing.T) {
+	path := writeTemp(t, "")
+	sameEvent := []Spec{
+		{Event: "PostToolUse", Capability: "format", Matcher: "Write|Edit", Command: "claude-toolkit run --event=post --cap=format", Timeout: 30},
+		{Event: "PostToolUse", Capability: "heal", Matcher: "Write|Edit", Command: "claude-toolkit run --event=post --cap=heal", Timeout: 30},
+	}
+	applyPlan(t, path, sameEvent)
+
+	entries, err := Inspect(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("want both capabilities installed, got %d: %+v", len(entries), entries)
+	}
+	seen := map[string]bool{}
+	for _, e := range entries {
+		seen[e.Capability] = true
+	}
+	if !seen["format"] || !seen["heal"] {
+		t.Fatalf("both capabilities must be present: %v", seen)
+	}
+
+	// Disabling one must leave the other's group in place.
+	onlyHeal := []Spec{
+		{Event: "PostToolUse", Capability: "heal", Matcher: "Write|Edit", Command: "claude-toolkit run --event=post --cap=heal", Timeout: 30},
+	}
+	applyPlan(t, path, onlyHeal)
+	entries, err = Inspect(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Capability != "heal" {
+		t.Fatalf("after disabling format, want exactly heal, got %+v", entries)
+	}
+
+	// Re-adding format is idempotent with the original full set.
+	applyPlan(t, path, sameEvent)
+	entries, err = Inspect(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("want 2 entries after re-adding, got %d: %+v", len(entries), entries)
+	}
+}
+
 func TestCapabilityOf(t *testing.T) {
 	cases := map[string]string{
 		"claude-toolkit run --event=pre --cap=guard":                    "guard",
