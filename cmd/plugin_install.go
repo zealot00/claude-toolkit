@@ -114,6 +114,13 @@ func pluginHooksInstalled() bool {
 // Claude Code auto-loads: skills-user is global (~/.claude/skills/
 // claude-toolkit/), skills-project is per-project (<dir>/.claude/skills/
 // claude-toolkit/, requires workspace trust).
+//
+// The plugin's hooks/hooks.json references ${CLAUDE_PLUGIN_ROOT}/bin/
+// claude-toolkit, so the binary is copied alongside the manifest under
+// bin/. Claude Code adds the plugin's bin/ to the Bash tool's PATH while
+// the plugin is enabled, so this avoids depending on the user's shell
+// PATH -- a Mac GUI-launched Claude Code without inherited shell PATH
+// still finds the binary.
 func initSkillsScope(scope, projectDir string, dryRun bool) int {
 	var dst string
 	if scope == "skills-user" {
@@ -136,9 +143,52 @@ func initSkillsScope(scope, projectDir string, dryRun bool) int {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	fmt.Println("Installed. Restart Claude Code for the /toolkit command and plugin hooks to load.")
+	if err := installBinary(dst); err != nil {
+		// A missing or un-copyable binary is a warning, not a fatal error:
+		// the plugin manifest and commands are already in place, and the
+		// user may have intentionally arranged for the binary to live
+		// elsewhere on PATH.
+		fmt.Fprintf(os.Stderr, "warning: could not copy binary into plugin bin/: %v\n", err)
+	} else {
+		fmt.Println("Installed. Restart Claude Code for the /toolkit command and plugin hooks to load.")
+	}
 	if scope == "skills-project" {
 		fmt.Println("Note: project-scope plugins load only after the workspace is trusted.")
 	}
 	return 0
+}
+
+// installBinary copies the currently-running claude-toolkit executable into
+// <dst>/bin/ and chmods it 0755. The destination's bin/ directory is added
+// to the Bash tool's PATH by Claude Code while the plugin is enabled, which
+// makes the ${CLAUDE_PLUGIN_ROOT}/bin/claude-toolkit reference inside
+// hooks/hooks.json resolve without depending on the user's shell PATH.
+func installBinary(dst string) error {
+	self, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("locate self: %w", err)
+	}
+	if resolved, err := filepath.EvalSymlinks(self); err == nil {
+		self = resolved
+	}
+	src, err := os.Open(self)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", self, err)
+	}
+	defer src.Close()
+
+	binDir := filepath.Join(dst, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", binDir, err)
+	}
+	dstPath := filepath.Join(binDir, "claude-toolkit")
+	dstFile, err := os.OpenFile(dstPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", dstPath, err)
+	}
+	defer dstFile.Close()
+	if _, err := src.WriteTo(dstFile); err != nil {
+		return fmt.Errorf("copy: %w", err)
+	}
+	return nil
 }

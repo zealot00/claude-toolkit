@@ -68,8 +68,8 @@ func shellQuote(p string) string {
 func initCmd(args []string) int {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	dryRun := fs.Bool("dry-run", false, "show what would change without writing anything")
-	scope := fs.String("scope", string(installer.ScopeUser), "target: user|project|local (settings.json) or skills-user|skills-project (auto-loading plugin directory)")
-	projectDir := fs.String("project-dir", "", "project root for --scope=project|local (default: current directory)")
+	scope := fs.String("scope", "skills-user", "target: skills-user|skills-project (plugin directory, idiomatic) or user|project|local (legacy settings.json paths)")
+	projectDir := fs.String("project-dir", "", "project root for --scope=project|local|skills-project (default: current directory)")
 	uninstall := fs.Bool("uninstall", false, "remove the toolkit's hooks instead of installing them")
 	absPath := fs.Bool("abs-path", false, "pin the absolute path of this binary (now the default; kept for compatibility)")
 	noAbsPath := fs.Bool("no-abs-path", false, "resolve the command on PATH instead of pinning this binary's absolute path")
@@ -99,6 +99,23 @@ func initCmd(args []string) int {
 	// touching settings.json.
 	if *scope == "skills-user" || *scope == "skills-project" {
 		return initSkillsScope(*scope, dir, *dryRun)
+	}
+
+	// Legacy settings.json paths (--scope=user|project|local). The plugin
+	// directory is the idiomatic Claude Code install surface; warn users
+	// who still have toolkit hooks in settings.json that they can switch
+	// with one command and get plugin-aware lifecycle for free.
+	if !*uninstall {
+		if homePath, err := installer.Path(installer.ScopeUser, ""); err == nil {
+			if installed, _ := installer.Inspect(homePath); len(installed) > 0 {
+				fmt.Fprintf(os.Stderr,
+					"note: claude-toolkit hooks are registered in %s, which means\n"+
+						"      /plugin disable and /plugin uninstall cannot turn them off. Run\n"+
+						"        %s init --scope=skills-user\n"+
+						"      to move the install to the plugin directory and reclaim that lifecycle.\n\n",
+					homePath, binName)
+			}
+		}
 	}
 
 	path, err := installer.Path(installer.Scope(*scope), dir)

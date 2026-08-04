@@ -28,15 +28,21 @@ claude-toolkit doctor
 
 ## Install
 
-### With Go
+The plugin is the idiomatic Claude Code install surface: it shows up in `/plugin`, can be disabled or uninstalled, and its state lives under Claude Code's own namespace. `claude-toolkit init` is the CLI helper that does the same thing without going through the marketplace.
+
+### 1. Install the binary (always required)
+
+`claude-toolkit` is a single Go binary; the plugin is just a directory Claude Code reads. Install the binary first.
+
+**With Go**
 
 ```sh
 go install github.com/zealot00/claude-toolkit@latest
 ```
 
-Binaries land in `$GOBIN`, or `$GOPATH/bin`, or `~/go/bin`. That directory must be on your `PATH` — see [the PATH caveat](#the-path-caveat).
+Binaries land in `$GOBIN`, `$GOPATH/bin`, or `~/go/bin`. That directory must be on your `PATH` — see [the PATH caveat](#the-path-caveat).
 
-### Without Go
+**Without Go**
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/zealot00/claude-toolkit/main/scripts/install.sh | bash
@@ -44,7 +50,7 @@ curl -fsSL https://raw.githubusercontent.com/zealot00/claude-toolkit/main/script
 
 The script detects your OS and architecture, downloads the matching release archive, **verifies its SHA-256 against the published `checksums.txt`**, and installs to `/usr/local/bin` or `~/.local/bin`.
 
-It does *not* run `init` for you. `init` modifies your Claude Code configuration, and a script piped from the internet has no business doing that silently.
+It does *not* register the plugin for you. Registering touches your Claude Code configuration, and a script piped from the internet has no business doing that silently.
 
 > If piping a remote script into `bash` makes you uneasy — good instinct, and this toolkit's own guard hook blocks Claude from doing exactly that. Download and read it first:
 >
@@ -55,12 +61,53 @@ It does *not* run `init` for you. `init` modifies your Claude Code configuration
 
 Override the version or destination with `CLAUDE_TOOLKIT_VERSION` and `INSTALL_DIR`.
 
-### From source
+**From source**
 
 ```sh
 git clone https://github.com/zealot00/claude-toolkit
 cd claude-toolkit
 make install
+```
+
+### 2. Register the plugin (recommended)
+
+**Via the Claude Code marketplace** — the plugin directory in this repo is itself a marketplace:
+
+```
+/plugin marketplace add zealot00/claude-toolkit
+/plugin install claude-toolkit
+```
+
+`/plugin uninstall claude-toolkit` then removes the hooks and the state directory in one atomic step. Use `/plugin disable claude-toolkit` to turn it off without losing anything.
+
+**Via the CLI helper** — same effect, no marketplace round-trip:
+
+```sh
+claude-toolkit init                     # ~/.claude/skills/claude-toolkit/  (global, default)
+claude-toolkit init --scope=skills-project --project-dir=<dir>
+                                         # <dir>/.claude/skills/claude-toolkit/  (one project)
+```
+
+Both paths copy the plugin manifest, the `/claude-toolkit:toolkit` slash command, and the hooks into Claude Code's auto-load directory. The binary is **also copied** into the plugin's `bin/` directory so the `${CLAUDE_PLUGIN_ROOT}/bin/claude-toolkit` reference inside `hooks/hooks.json` resolves without depending on your shell's `PATH` — a Mac GUI-launched Claude Code without inherited shell `PATH` still finds it.
+
+Restart Claude Code after registration. The `claude-toolkit` binary on stderr the first time you run any subcommand inside Claude Code is the [official `<claude-code-hint />` protocol](https://code.claude.com/docs/en/plugin-hints) advertising this same plugin; Claude Code deduplicates it once per session.
+
+### 3. Verify
+
+```sh
+claude-toolkit doctor
+```
+
+All checks should pass with no warnings beyond PATH and file-permission notes. `doctor` also runs the hook self-test against synthetic events so you can see guard decisions before any real tool call fires.
+
+### 4. (Advanced) Settings.json path
+
+`init` still accepts the original `--scope=user|project|local` flag, which writes hooks into `~/.claude/settings.json` (or the project / local equivalent). This is the **legacy install path** — it is documented for completeness but no longer recommended, because hooks registered there are not visible to `/plugin` and survive `uninstall` only when you remember to remove them by hand. The plugin path above gets the same behavior with proper lifecycle integration.
+
+The CLI prints a one-time migration hint the first time you use a legacy scope on a machine that already has toolkit hooks in `settings.json`:
+
+```sh
+claude-toolkit init --scope=skills-user   # move hooks to the plugin directory
 ```
 
 ---
@@ -69,32 +116,26 @@ make install
 
 ### 1. `claude-toolkit init`
 
-Merges the toolkit's hooks into `~/.claude/settings.json`.
+Copies the plugin (manifest, slash command, hooks, and binary) into Claude Code's auto-load directory. **The default is `--scope=skills-user`** — `~/.claude/skills/claude-toolkit/`, which Claude Code picks up for every project. The binary lands in the plugin's `bin/` so `${CLAUDE_PLUGIN_ROOT}/bin/claude-toolkit` resolves without depending on `PATH`.
 
 ```
 $ claude-toolkit init
 
-Installing claude-toolkit hooks in /Users/you/.claude/settings.json
+Installing the claude-toolkit plugin (skills scope) into /Users/you/.claude/skills/claude-toolkit
 
-  + PostToolUse
-  + PreToolUse
-  + SessionStart
-
-Backed up previous settings to /Users/you/.claude/settings.json.bak.20260803-142201
-Wrote /Users/you/.claude/settings.json
-
-Hooks are loaded when a session starts, so restart Claude Code for this to
-take effect. Then run `claude-toolkit doctor` to verify.
+Installed. Restart Claude Code for the /toolkit command and plugin hooks to load.
 ```
 
 | Flag | Effect |
 | --- | --- |
-| `--dry-run` | Print the resulting `hooks` block without writing anything |
-| `--uninstall` | Remove the toolkit's entries, leaving everything else alone |
-| `--scope user\|project\|local` | Write hooks into `~/.claude/settings.json` / project settings (default `user`) |
-| `--scope skills-user\|skills-project` | Install the auto-loading plugin directory instead: `~/.claude/skills/claude-toolkit/` (global) or `<dir>/.claude/skills/claude-toolkit/` (per-project, needs workspace trust) |
-| `--project-dir <path>` | Project root for `--scope=project\|local` |
-| `--abs-path` | Write this binary's absolute path instead of resolving `claude-toolkit` on `PATH` |
+| `--dry-run` | Print what would be written without touching the filesystem |
+| `--uninstall` | Remove the toolkit's hooks instead of installing them |
+| `--scope skills-user` (default) | Install into `~/.claude/skills/claude-toolkit/` (global, auto-loads for every project) |
+| `--scope skills-project` | Install into `<dir>/.claude/skills/claude-toolkit/` (one project; loads once the workspace is trusted) |
+| `--scope user\|project\|local` | **Legacy**: write hooks into `~/.claude/settings.json` or the project equivalent. Use only when the plugin path is not an option — settings.json hooks survive `uninstall` and are invisible to `/plugin`. |
+| `--project-dir <path>` | Project root for `--scope=project\|local\|skills-project` (default: current directory) |
+| `--abs-path` | Pin this binary's absolute path (the default for the settings.json path; ignored on the skills path which uses `bin/`) |
+| `--no-abs-path` | Resolve the command on `PATH` instead of pinning the absolute path |
 | `--force` | Install even if the binary is not resolvable on `PATH` |
 
 **Hooks load at session start.** Restart Claude Code after running `init`.
@@ -148,7 +189,7 @@ echo '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command"
 
 ### 4. `claude-toolkit manage`
 
-Lists, enables and disables the toolkit's hook capabilities — the interface the plugin's `/toolkit` command drives. State is **global** and stored in the toolkit's private config (`~/.claude-toolkit/state/capabilities.json`), separate from Claude Code's settings.json, so `manage` works identically for both the plugin's `hooks/hooks.json` and the `init` registration path — and survives plugin uninstall/reinstall.
+Lists, enables and disables the toolkit's hook capabilities — the interface the plugin's `/toolkit` command drives. State is **global** and stored in the toolkit's private config (`${CLAUDE_PLUGIN_DATA}/state/capabilities.json` when running as a plugin, falling back to `~/.claude/plugins/data/claude-toolkit/state/capabilities.json` or `~/.claude-toolkit/state/capabilities.json` for legacy installs), separate from Claude Code's settings.json, so `manage` works identically for both the plugin's `hooks/hooks.json` and the `init` registration path. Plugin lifecycle (disable / uninstall) cleans the directory automatically; non-plugin legacy installs use `uninstall --purge-config`.
 
 ```
 $ claude-toolkit manage list
@@ -191,24 +232,11 @@ Run bare (`claude-toolkit manage`) for an interactive toggle UI in the terminal.
 
 ## The Claude Code plugin
 
-A companion plugin lets you manage the toolkit without leaving Claude Code. Install it, and a `/claude-toolkit:toolkit` slash command appears; Claude then runs `claude-toolkit manage list/enable/disable` for you and shows the state right in the session. Bare `/toolkit` works only while no other plugin claims the name.
+The plugin is the primary install surface: see [Register the plugin](#2-register-the-plugin-recommended). `claude-toolkit init --scope=skills-user` is the CLI helper that does the same thing without going through the marketplace.
 
-**Install the plugin** (choose one path):
-
-1. **`claude-toolkit init --scope=skills-user`** (recommended): copies the plugin into `~/.claude/skills/claude-toolkit/`, which Claude Code auto-loads for every project. The plugin ships `.claude-plugin/plugin.json`, `commands/toolkit.md` and `hooks/hooks.json`; its own hooks are the registration.
-2. **`claude-toolkit init --scope=skills-project`**: same as above, but into `<dir>/.claude/skills/claude-toolkit/` for one project (loads after the workspace is trusted).
-3. **`claude-toolkit init`** (default): writes hooks into `~/.claude/settings.json` and copies the plugin (without `hooks/hooks.json`) to `~/.claude/plugins/claude-toolkit/` so the `/toolkit` slash command is available.
-4. **`/plugin` in Claude Code**: point it at this repository's path (or an unpacked release archive).
-
-There is exactly one hook registration per capability — either `settings.json` (default `init`) or the plugin's own `hooks/hooks.json` (`--scope=skills-*`), never both. The `settings.json` path installs the plugin without hooks; the skills-* path uses the plugin's hooks. Restart the session, then:
-
-```
-/claude-toolkit:toolkit
-```
+The `/claude-toolkit:toolkit` slash command lives inside the plugin and lets you manage the toolkit without leaving Claude Code. Ask in plain language — "show the hooks", "disable format", "re-enable guard" — and Claude will call `claude-toolkit manage list/enable/disable` for you and show the state right in the session. `claude-toolkit doctor` (also run by the command) verifies the result.
 
 The fully qualified form `/claude-toolkit:toolkit` is the stable contract — Claude Code namespaced plugin commands as `<plugin>:<command>`. The bare `/toolkit` works only while no other plugin claims the name, so always use the qualified form in scripts and documentation.
-
-Ask for what you want in plain language — "show the hooks", "disable format", "re-enable guard" — and Claude will call `claude-toolkit manage` and report back. `claude-toolkit doctor` (also run by the command) verifies the result.
 
 ### `/toolkit` capabilities
 

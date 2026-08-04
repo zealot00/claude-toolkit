@@ -51,6 +51,12 @@ toolkit's own CLI. Do **not** edit `~/.claude/settings.json` by hand.
    claude-toolkit manage enable <capability>     # e.g. enable guard
    claude-toolkit manage disable <capability>    # e.g. disable format
    ```
+
+   State lives in the toolkit's private directory under
+   `${CLAUDE_PLUGIN_DATA}/state/capabilities.json` (or
+   `~/.claude/plugins/data/claude-toolkit/state/capabilities.json` for
+   non-plugin installs). The plugin lifecycle (`/plugin disable`,
+   `/plugin uninstall`) removes the directory automatically.
    You may enable or disable several capabilities in one call:
    ```sh
    claude-toolkit manage enable guard format

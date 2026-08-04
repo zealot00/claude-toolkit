@@ -1,0 +1,24 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "claude-toolkit",
+  "description": "Self-hosted marketplace for the claude-toolkit plugin: guardrail and productivity hooks for Claude Code",
+  "owner": {
+    "name": "zealot00"
+  },
+  "plugins": [
+    {
+      "name": "claude-toolkit",
+      "description": "Manage claude-toolkit hook capabilities (guard, loopguard, format, heal, enrich, notify, envfix) from inside Claude Code",
+      "author": {
+        "name": "zealot00"
+      },
+      "version": "0.1.0",
+      "category": "productivity",
+      "source": {
+        "source": "directory",
+        "path": "./"
+      },
+      "homepage": "https://github.com/zealot00/claude-toolkit"
+    }
+  ]
+}
