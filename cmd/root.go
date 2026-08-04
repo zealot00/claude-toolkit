@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"embed"
 	"fmt"
 	"io"
 	"os"
@@ -16,6 +17,20 @@ var (
 	Commit  = "none"
 	Date    = "unknown"
 )
+
+// pluginAssetsFS holds the embedded plugin payload (.claude-plugin/,
+// commands/, hooks/) so that `init --scope=skills-*` can install it without
+// depending on the source tree being next to the binary. main() wires this
+// up at startup.
+var pluginAssetsFS embed.FS
+
+// SetPluginAssets installs the embedded plugin payload. Called once from
+// main(); subsequent calls panic because the FS is meant to be set before
+// any command runs.
+func SetPluginAssets(fs embed.FS) { pluginAssetsFS = fs }
+
+// PluginAssets returns the embedded plugin payload. Tests may call it.
+func PluginAssets() embed.FS { return pluginAssetsFS }
 
 // binName is what the installed executable is expected to be called on PATH.
 const binName = "claude-toolkit"

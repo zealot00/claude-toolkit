@@ -131,34 +131,37 @@ func manageSet(names []string, want, dryRun bool) int {
 	for _, n := range names {
 		enabled[n] = want
 	}
-	return applyEnableState(enabled, dryRun)
+	return applyEnableState(enabled, names, dryRun)
 }
 
 // manageSetAll enables or disables every capability.
 func manageSetAll(want, dryRun bool) int {
 	enabled := map[string]bool{}
+	all := []string{}
 	for _, c := range registeredCapabilities() {
 		enabled[c.name] = want
+		all = append(all, c.name)
 	}
-	return applyEnableState(enabled, dryRun)
+	return applyEnableState(enabled, all, dryRun)
 }
 
-// applyEnableState persists the enabled set and reports the change.
-func applyEnableState(enabled map[string]bool, dryRun bool) int {
+// applyEnableState persists the enabled set and reports the change. changed
+// is the list of capability names the caller asked to modify; the message
+// loop reports only those, not every enabled capability.
+func applyEnableState(enabled map[string]bool, changed []string, dryRun bool) int {
 	verb := func(want bool) string {
 		if want {
 			return "enabled"
 		}
 		return "disabled"
 	}
-	names := enabledKeys(enabled)
 	if !dryRun {
 		if err := capcfg.Save(enabled); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
 		}
 	}
-	for _, n := range names {
+	for _, n := range changed {
 		fmt.Printf("  %s %s\n", verb(enabled[n]), n)
 	}
 	if dryRun {

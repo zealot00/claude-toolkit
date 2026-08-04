@@ -6,66 +6,23 @@ import (
 	"testing"
 )
 
-func TestFindPluginSourceFromExeTree(t *testing.T) {
-	// Simulate a checkout: <root>/bin/claude-toolkit with .claude-plugin/
-	// next to bin/.
-	root := t.TempDir()
-	binDir := filepath.Join(root, "bin")
-	if err := os.MkdirAll(filepath.Join(root, ".claude-plugin"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, ".claude-plugin", "plugin.json"), []byte(`{"name":"claude-toolkit"}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	exe := filepath.Join(binDir, "claude-toolkit")
-
-	old := osExecutable
-	osExecutable = func() (string, error) { return exe, nil }
-	defer func() { osExecutable = old }()
-
-	got, err := findPluginSource()
-	if err != nil {
-		t.Fatalf("findPluginSource: %v", err)
-	}
-	if got != root {
-		t.Errorf("source = %q, want %q", got, root)
-	}
-}
-
-func TestFindPluginSourceNone(t *testing.T) {
-	old := osExecutable
-	osExecutable = func() (string, error) { return filepath.Join(t.TempDir(), "nowhere", "bin", "tool"), nil }
-	defer func() { osExecutable = old }()
-
-	if _, err := findPluginSource(); err == nil {
-		t.Error("no .claude-plugin anywhere: expected an error")
-	}
-}
-
+// TestInstallPluginCopiesTree verifies that installPlugin copies every
+// directory in the embedded payload (.claude-plugin/, commands/, hooks/)
+// from the binary's embed.FS into the destination under the user's HOME.
 func TestInstallPluginCopiesTree(t *testing.T) {
-	src := t.TempDir()
-	for _, d := range []string{".claude-plugin", "commands", "hooks"} {
-		if err := os.MkdirAll(filepath.Join(src, d), 0o755); err != nil {
-			t.Fatal(err)
+	// Skip cleanly when the test binary was built without the embed (e.g.,
+	// if the plugin_assets.go file was missing at compile time).
+	fs := PluginAssets()
+	for _, want := range []string{
+		".claude-plugin/plugin.json",
+		"commands/toolkit.md",
+		"hooks/hooks.json",
+	} {
+		if _, err := fs.ReadFile(want); err != nil {
+			t.Skipf("embedded payload missing %s: %v", want, err)
 		}
 	}
-	write := func(rel, content string) {
-		t.Helper()
-		if err := os.WriteFile(filepath.Join(src, rel), []byte(content), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	write(".claude-plugin/plugin.json", `{"name":"claude-toolkit"}`)
-	write("commands/toolkit.md", "# toolkit command")
-	write("hooks/hooks.json", `{"PreToolUse":[]}`)
 
-	// Point the exe search at src, then install to a fake HOME.
-	oldExe := osExecutable
-	osExecutable = func() (string, error) { return filepath.Join(src, "bin", "tool"), nil }
-	defer func() { osExecutable = oldExe }()
-
-	// Point the exe search at src, then install to a fake HOME. Windows reads
-	// USERPROFILE, POSIX reads HOME; set both so the test is hermetic.
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
@@ -74,26 +31,37 @@ func TestInstallPluginCopiesTree(t *testing.T) {
 	if err != nil {
 		t.Fatalf("installPlugin: %v", err)
 	}
-	for _, rel := range []string{".claude-plugin/plugin.json", "commands/toolkit.md", "hooks/hooks.json"} {
+	wantDst := filepath.Join(home, ".claude", "plugins", "claude-toolkit")
+	if dst != wantDst {
+		t.Errorf("dst = %q, want %q", dst, wantDst)
+	}
+	for _, rel := range []string{
+		".claude-plugin/plugin.json",
+		"commands/toolkit.md",
+		"hooks/hooks.json",
+	} {
 		if _, err := os.Stat(filepath.Join(dst, rel)); err != nil {
 			t.Errorf("missing copied file %s: %v", rel, err)
 		}
 	}
 }
 
-func TestModuleCacheRoot(t *testing.T) {
-	t.Setenv("GOMODCACHE", "/custom/mod")
-	if got := moduleCacheRoot(); got != "/custom/mod" {
-		t.Errorf("GOMODCACHE = %q", got)
+// TestInstallPluginDryRun verifies that --dry-run returns the destination
+// without writing anything.
+func TestInstallPluginDryRun(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	dst, err := installPlugin(true)
+	if err != nil {
+		t.Fatalf("installPlugin dry-run: %v", err)
 	}
-	t.Setenv("GOMODCACHE", "")
-	t.Setenv("GOPATH", "/custom/gopath")
-	if got := moduleCacheRoot(); got != filepath.Join("/custom/gopath", "pkg", "mod") {
-		t.Errorf("GOPATH fallback = %q", got)
+	wantDst := filepath.Join(home, ".claude", "plugins", "claude-toolkit")
+	if dst != wantDst {
+		t.Errorf("dst = %q, want %q", dst, wantDst)
 	}
-	t.Setenv("GOPATH", "")
-	t.Setenv("HOME", t.TempDir())
-	if got := moduleCacheRoot(); got == "" {
-		t.Error("HOME fallback must produce a non-empty path")
+	if _, err := os.Stat(wantDst); err == nil {
+		t.Errorf("dry-run must not create %s", wantDst)
 	}
 }

@@ -12,5 +12,6 @@ import (
 )
 
 func main() {
+	cmd.SetPluginAssets(pluginAssets)
 	os.Exit(cmd.Execute(os.Args[1:]))
 }
