@@ -40,6 +40,22 @@
           { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/claude-toolkit\" run --event=prompt --timeout=5000", "timeout": 5 }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/claude-toolkit\" run --event=stop --timeout=10000", "timeout": 10 }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/claude-toolkit\" run --event=session-end --timeout=5000", "timeout": 5 }
+        ]
+      }
     ]
   }
 }

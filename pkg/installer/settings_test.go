@@ -461,3 +461,87 @@ func TestCapabilityOf(t *testing.T) {
 		}
 	}
 }
+
+func TestEnsureStatusLine_InjectsWhenAbsent(t *testing.T) {
+	path := writeTemp(t, `{"model": "opus"}`)
+	def := StatusLineConfig{Type: "command", Command: "claude-toolkit hud"}
+
+	p, err := EnsureStatusLine(path, def)
+	if err != nil {
+		t.Fatalf("EnsureStatusLine: %v", err)
+	}
+	if !p.Changed() {
+		t.Fatal("plan must change when statusLine is absent")
+	}
+	if p.StatusLineKept != "" {
+		t.Errorf("StatusLineKept = %q, want empty when injecting", p.StatusLineKept)
+	}
+	if err := p.Apply(); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	got := readJSON(t, path)
+	sl, ok := got["statusLine"].(map[string]any)
+	if !ok {
+		t.Fatalf("statusLine missing or wrong type: %v", got["statusLine"])
+	}
+	if sl["type"] != "command" || sl["command"] != "claude-toolkit hud" {
+		t.Errorf("statusLine = %v, want command/claude-toolkit hud", sl)
+	}
+	if got["model"] != "opus" {
+		t.Errorf("sibling field model = %v, want preserved", got["model"])
+	}
+}
+
+func TestEnsureStatusLine_KeepsExisting(t *testing.T) {
+	const existing = `{
+  "statusLine": {"type": "command", "command": "my-custom-hud"},
+  "model": "sonnet"
+}`
+	path := writeTemp(t, existing)
+	def := StatusLineConfig{Type: "command", Command: "claude-toolkit hud"}
+
+	p, err := EnsureStatusLine(path, def)
+	if err != nil {
+		t.Fatalf("EnsureStatusLine: %v", err)
+	}
+	if p.Changed() {
+		t.Error("plan must not change when statusLine already exists")
+	}
+	if p.StatusLineKept == "" {
+		t.Error("StatusLineKept must capture the user's existing value")
+	}
+	if !strings.Contains(p.StatusLineKept, "my-custom-hud") {
+		t.Errorf("StatusLineKept = %q, want it to mention my-custom-hud", p.StatusLineKept)
+	}
+
+	// Apply should be a no-op; the file on disk is unchanged.
+	if err := p.Apply(); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	got := readJSON(t, path)
+	sl := got["statusLine"].(map[string]any)
+	if sl["command"] != "my-custom-hud" {
+		t.Errorf("statusLine was clobbered: %v", sl)
+	}
+}
+
+func TestEnsureStatusLine_NoFileStillInjects(t *testing.T) {
+	path := writeTemp(t, "")
+	def := StatusLineConfig{Type: "command", Command: "claude-toolkit hud"}
+
+	p, err := EnsureStatusLine(path, def)
+	if err != nil {
+		t.Fatalf("EnsureStatusLine: %v", err)
+	}
+	if !p.Changed() {
+		t.Fatal("plan must change when injecting into a missing file")
+	}
+	if err := p.Apply(); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	got := readJSON(t, path)
+	if _, ok := got["statusLine"]; !ok {
+		t.Errorf("statusLine missing after Apply: %v", got)
+	}
+}

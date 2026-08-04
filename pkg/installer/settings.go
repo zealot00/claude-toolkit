@@ -65,6 +65,14 @@ type Spec struct {
 	Timeout    int    // seconds; omitted from JSON when zero
 }
 
+// StatusLineConfig is the value we want to install at root.statusLine when
+// none is present. Kept small on purpose: HUD is the only consumer, and a
+// richer shape (refresh interval, etc.) is not in scope yet.
+type StatusLineConfig struct {
+	Type    string `json:"type"`    // always "command"
+	Command string `json:"command"` // shell command Claude Code runs each turn
+}
+
 // ownedCommand recognises a hook entry this toolkit installed, whether it was
 // written as a bare PATH lookup or as an absolute path, and whatever the
 // binary's directory was at the time. Matching on the invocation rather than
@@ -95,6 +103,12 @@ type Plan struct {
 	Added    []string
 	Replaced []string
 	Removed  []string
+
+	// StatusLineKept is the user's existing statusLine JSON when
+	// EnsureStatusLine refused to overwrite it. Empty when no statusLine
+	// was present (and the plan injects the default) or when the plan
+	// did not touch statusLine.
+	StatusLineKept string
 }
 
 // Changed reports whether applying the plan would alter the file.
@@ -207,6 +221,53 @@ func BuildPlan(path string, specs []Spec) (*Plan, error) {
 		root["hooks"] = hooks
 	}
 
+	after, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("installer: encode settings: %w", err)
+	}
+	p.After = append(after, '\n')
+
+	if len(before) > 0 && p.Changed() {
+		p.BackupPath = fmt.Sprintf("%s.bak.%s", path, time.Now().Format("20060102-150405"))
+	}
+	return p, nil
+}
+
+// EnsureStatusLine reads the settings file at path and returns a Plan that
+// adds the supplied statusLine when the file has no statusLine field, and a
+// no-op plan when one is already present. The caller can read the result's
+// StatusLineKept field to know which case fired.
+//
+// Why a separate plan instead of folding it into BuildPlan: statusLine is a
+// top-level field, not an event-scoped hook, and conflating the two would
+// leak concerns into Spec. Keeping them separate lets init apply the hooks
+// plan and the statusLine plan in either order.
+//
+// A no-op plan is still returned (with StatusLineKept=true) so the caller
+// can log the user's existing statusLine verbatim.
+func EnsureStatusLine(path string, def StatusLineConfig) (*Plan, error) {
+	before, mode, err := read(path)
+	if err != nil {
+		return nil, err
+	}
+	root, err := decode(before, path)
+	if err != nil {
+		return nil, err
+	}
+
+	p := &Plan{Path: path, Before: before, Mode: mode}
+
+	if existing, ok := root["statusLine"]; ok && existing != nil {
+		p.After = before
+		raw, _ := json.Marshal(existing)
+		p.StatusLineKept = string(raw)
+		return p, nil
+	}
+
+	root["statusLine"] = map[string]any{
+		"type":    def.Type,
+		"command": def.Command,
+	}
 	after, err := json.MarshalIndent(root, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("installer: encode settings: %w", err)

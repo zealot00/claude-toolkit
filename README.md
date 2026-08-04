@@ -224,7 +224,7 @@ Run bare (`claude-toolkit manage`) for an interactive toggle UI in the terminal.
 | `ast <file>` | Prints a compressed JSON structural summary (signatures, no bodies) |
 | `rules` | Lists every built-in rule and its verdict |
 | `proxy` | Optional local API proxy with 429 auto-retry (opt-in, not auto-wired) |
-| `upgrade [--check-only]` | Checks GitHub Releases for a newer version |
+| `upgrade [--check-only] [--skip-doctor] [--cleanup]` | Backs up the running binary, downloads + SHA-256-verifies the new release, atomically replaces it, runs `doctor` to verify (unless `--skip-doctor`), and rolls back automatically if anything goes wrong. On success, runs the schema-migration registry and prints `Run claude-toolkit init --force to refresh plugin and settings.json`. `--cleanup` removes the leftover `.bak` from a previous successful upgrade. |
 | `uninstall [--purge-config]` | Removes the toolkit's hooks (alias of `init --uninstall`) |
 | `log [--follow] [--event=…]` | Tails the debug log written under `CLAUDE_TOOLKIT_DEBUG` |
 
@@ -249,6 +249,9 @@ The fully qualified form `/claude-toolkit:toolkit` is the stable contract — Cl
 | `enrich` | SessionStart, UserPromptSubmit | injects git / toolchain / working-tree state |
 | `notify` | Pre+PostToolUse | desktop notification for slow or failed calls (opt-in) |
 | `envfix` | PreToolUse | rewrites bare `python`/`pip`/`pytest`/`node`/`npm` calls to the project's `.venv` when one exists |
+| `autoproxy` | SessionStart, SessionEnd | in `bypassPermissions` mode, forks the local 429 retry proxy when `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY` is set; kills it on session end |
+| `retryguard` | Stop | when autoproxy is not running, scans the transcript tail for `429` / `rate_limit_error` and blocks with a retry nudge |
+| `hud` | (statusLine) | not a hook — `init` registers `claude-toolkit hud` as Claude Code's `statusLine.command` so the chat area shows live token / proxy / retry / mode state |
 
 ---
 
@@ -305,6 +308,26 @@ Set `CLAUDE_TOOLKIT_NOTIFY=<seconds>` to get an OS desktop notification (macOS `
 ### PreToolUse — envfix
 
 When a project has a local virtual environment (`.venv`/`venv`), rewrites bare interpreter invocations — `python`, `pip`, `pytest`, `node`, `npm`, `npx`, `yarn`, `pnpm`, `bun` — to their `.venv/bin` equivalents, so Claude uses the project's pinned toolchain instead of a system interpreter. Only *bare* command names are rewritten: `/usr/bin/python`, `./tools/pytest` and compound commands with pipes, redirects, `&&` or `$(…)` are left alone. No venv → silent no-op. Caveat: some Claude Code versions silently drop the rewritten command, in which case the original command runs unmodified (fail-open).
+
+### SessionStart+SessionEnd — autoproxy (China / 网络代理场景)
+
+In `bypassPermissions` mode, when one of `HTTPS_PROXY`, `HTTP_PROXY`, or `ALL_PROXY` is set in the environment, `autoproxy` forks the existing local 429 retry proxy (`claude-toolkit proxy`) on `127.0.0.1:8080` and tears it down on session end. The forked proxy preserves any chained upstream already configured via `$ANTHROPIC_BASE_URL` (so Kimi / 腾讯 / 阿里 token-plan endpoints keep working through your network proxy), and the child process's own env has the proxy keys stripped to avoid recursive loops. Loop prevention: if `HTTPS_PROXY` already points at `127.0.0.1:8080` (i.e. you've already wired Claude Code through our local proxy), the hook is a no-op.
+
+Disable with `claude-toolkit manage disable autoproxy`. PID and HUD state live in `$CLAUDE_TOOLKIT_HOME/state/`.
+
+### Stop — retryguard (transcript-tail 429 fallback)
+
+When autoproxy is not in play (no network proxy env, non-`bypassPermissions` mode, autoproxy disabled), `retryguard` reads the last 50 lines of the session transcript, looks for `429`, `rate limit`, `too many requests` or `rate_limit_error` markers, and on hit returns a `decision: block` with a retry nudge. Fail-open if the transcript is missing or unreadable. Disable with `claude-toolkit manage disable retryguard`.
+
+### statusLine — hud (持续状态显示)
+
+`init` registers `claude-toolkit hud` as Claude Code's `statusLine.command`, so the chat area shows a one-line ANSI HUD that re-renders every turn:
+
+```
+[tok 42k (in:30k cached:10k new:0 out:2k)] [proxy ● 127.0.0.1:8080 → moonshot] [retry ● HOOK] [mode ● bypassPermissions]
+```
+
+Four fields: live token usage (streamed from the JSONL transcript), autoproxy status (port + upstream or OFF), retryguard status (`HOOK` / `PROXY` / `OFF`), and permission mode. `tok` is dim grey, `proxy ●` green when running and red when off, `retry ●` yellow when fallback fires, `mode ●` cyan. If you've already set your own `statusLine` in `~/.claude/settings.json`, `init` keeps it and notes the conflict in its summary.
 
 ---
 

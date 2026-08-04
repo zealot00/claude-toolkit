@@ -17,5 +17,7 @@ func Register() *dispatcher.Dispatcher {
 	d.Register(LoopGuard())
 	d.Register(Notifier())
 	d.Register(EnvFix())
+	d.Register(Autoproxy())
+	d.Register(RetryGuard())
 	return d
 }

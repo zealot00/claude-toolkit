@@ -11,11 +11,16 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/zealot00/claude-toolkit/internal/proxydetect"
+	"github.com/zealot00/claude-toolkit/internal/upgrader"
+	"github.com/zealot00/claude-toolkit/pkg/dir"
 )
 
 // releaseInfo is the subset of the GitHub Releases API response we need.
@@ -27,16 +32,43 @@ type releaseInfo struct {
 // upgradeCmd checks for a newer release and, without --check-only, downloads
 // and atomically replaces the running binary. Network failures are never
 // fatal for the rest of the session.
+//
+// The replacement is "smooth": the running binary is backed up to
+// <self>.bak before any write, the new binary is verified by running
+// `doctor` against it (unless --skip-doctor), and any failure rolls the
+// binary back from .bak. Successful upgrades run the schema-migration
+// registry and prompt the user to refresh the plugin via `init --force`.
 func upgradeCmd(args []string) int {
 	fs := flag.NewFlagSet("upgrade", flag.ContinueOnError)
 	checkOnly := fs.Bool("check-only", false, "just report whether a newer version exists")
+	skipDoctor := fs.Bool("skip-doctor", false, "skip the post-upgrade self-test (faster; less safe)")
+	cleanup := fs.Bool("cleanup", false, "remove the leftover backup file and exit")
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: %s upgrade [--check-only]\n\n"+
-			"Checks GitHub Releases for a newer version and replaces this binary.\n\nFlags:\n", binName)
+		fmt.Fprintf(os.Stderr, "Usage: %s upgrade [--check-only] [--skip-doctor] [--cleanup]\n\n"+
+			"Checks GitHub Releases for a newer version and replaces this binary.\n"+
+			"The replacement is smooth: backs up first, verifies the new binary\n"+
+			"with `doctor`, and rolls back on failure.\n\nFlags:\n", binName)
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
 		return 2
+	}
+
+	// Resolve the current binary up front: every branch below needs it,
+	// and a missing os.Executable here means we cannot operate.
+	self, err := os.Executable()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: locate current binary: %v\n", err)
+		return 1
+	}
+
+	if *cleanup {
+		if err := upgrader.Cleanup(self); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		fmt.Println("Removed leftover backup file.")
+		return 0
 	}
 
 	const repo = "zealot00/claude-toolkit"
@@ -65,13 +97,65 @@ func upgradeCmd(args []string) int {
 		return 0
 	}
 
+	// Surface the network proxy in the log so a slow download is not a
+	// mystery. The download itself uses Go's ProxyFromEnvironment, so this
+	// is purely observability.
+	if netProxy, ok := proxydetect.Detect(); ok {
+		fmt.Printf("downloading via network proxy %s\n", netProxy)
+	}
+
+	// Backup BEFORE any write so a torn upgrade cannot leave the user
+	// without a working binary.
+	if _, err := upgrader.Backup(self); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	fmt.Println("Backed up current binary.")
+
 	if err := doUpgrade(repo, latest.TagName); err != nil {
+		// Download / extract / replace failed. Try to put the old binary
+		// back so the user is not stranded with a half-installed tool.
+		_ = upgrader.Rollback(self)
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		fmt.Println("Fall back to the official installer:")
 		fmt.Printf("  curl -fsSL https://raw.githubusercontent.com/%s/main/scripts/install.sh | bash\n", repo)
 		return 1
 	}
+
+	// Verify the new binary actually runs and its self-test passes. The
+	// doctor command is run as a fresh process against the on-disk path
+	// (not the current one) so a wedged hook cannot deadlock the upgrade.
+	if !*skipDoctor {
+		doctor := exec.Command(self, "doctor")
+		doctor.Stdout = os.Stdout
+		doctor.Stderr = os.Stderr
+		if err := doctor.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "doctor failed after upgrade: %v -- rolling back\n", err)
+			if rerr := upgrader.Rollback(self); rerr != nil {
+				fmt.Fprintf(os.Stderr, "rollback failed: %v\n", rerr)
+			}
+			fmt.Println("Fall back to the official installer:")
+			fmt.Printf("  curl -fsSL https://raw.githubusercontent.com/%s/main/scripts/install.sh | bash\n", repo)
+			return 1
+		}
+	}
+
+	// Run any schema migrations the upgrade brought with us. Failures are
+	// surfaced but do not roll back the binary: the upgrade itself is
+	// sound, and a migration bug should not strand the user on the old
+	// binary.
+	if home, err := dir.Root(); err == nil {
+		ran, merr := upgrader.RunMigrations(Version, home)
+		if merr != nil {
+			fmt.Fprintf(os.Stderr, "warning: migration step failed: %v\n", merr)
+		}
+		for _, r := range ran {
+			fmt.Printf("ran migration: %s\n", r)
+		}
+	}
+
 	fmt.Println("Upgraded successfully. Restart Claude Code for the new hooks to load.")
+	fmt.Println("Run `claude-toolkit init --force` to refresh plugin and settings.json.")
 	return 0
 }
 
@@ -179,7 +263,7 @@ func downloadAndVerify(client *http.Client, baseURL, archive string) ([]byte, er
 
 // checksumFor extracts the sha256 for name from a checksums.txt body.
 func checksumFor(sums []byte, name string) string {
-	for _, line := range strings.Split(string(sums), "\n") {
+	for line := range strings.SplitSeq(string(sums), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) >= 2 && (fields[1] == name || fields[1] == "*"+name) {
 			return fields[0]

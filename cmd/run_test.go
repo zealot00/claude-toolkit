@@ -203,13 +203,15 @@ func TestBuildSpecsMatchesRoutes(t *testing.T) {
 	// Every registered capability appears, and multi-event capabilities get a
 	// group per event (this is what the review flagged as a blocking bug).
 	wantEvents := map[string][]string{
-		"guard":     {"PreToolUse"},
-		"format":    {"PostToolUse"},
-		"heal":      {"PostToolUse"},
-		"enrich":    {"SessionStart", "UserPromptSubmit"},
-		"loopguard": {"PreToolUse", "PostToolUse", "PostToolUseFailure"},
-		"notify":    {"PreToolUse", "PostToolUse", "PostToolUseFailure"},
-		"envfix":    {"PreToolUse"},
+		"guard":      {"PreToolUse"},
+		"format":     {"PostToolUse"},
+		"heal":       {"PostToolUse"},
+		"enrich":     {"SessionStart", "UserPromptSubmit"},
+		"loopguard":  {"PreToolUse", "PostToolUse", "PostToolUseFailure"},
+		"notify":     {"PreToolUse", "PostToolUse", "PostToolUseFailure"},
+		"envfix":     {"PreToolUse"},
+		"autoproxy":  {"SessionStart", "SessionEnd"},
+		"retryguard": {"Stop"},
 	}
 	covered := map[string][]string{}
 	for _, s := range specs {

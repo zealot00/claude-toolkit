@@ -32,6 +32,9 @@ more events; each has its own `manage` switch):
 | `enrich` | SessionStart, UserPromptSubmit | Injects git / toolchain / working-tree state |
 | `notify` | PreToolUse + PostToolUse | Desktop notification for slow or failed calls (opt-in via `CLAUDE_TOOLKIT_NOTIFY`) |
 | `envfix` | PreToolUse | Rewrites bare interpreter calls to the project's `.venv` when one exists |
+| `autoproxy` | SessionStart, SessionEnd | In `bypassPermissions` mode, forks the local 429 retry proxy when a network proxy env (`HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY`) is set; cleans up on session end |
+| `retryguard` | Stop | When autoproxy is not running, scans the transcript tail for `429` / `rate_limit_error` markers and blocks with a retry nudge |
+| `hud` | (statusLine) | Not a hook — `init` registers `claude-toolkit hud` as Claude Code's `statusLine.command` so the chat area shows live token / proxy / retry / mode state |
 
 ## What to do
 

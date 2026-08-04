@@ -80,6 +80,8 @@ func Execute(args []string) int {
 		return rulesCmd(args[1:])
 	case "proxy":
 		return proxyCmd(args[1:])
+	case "hud":
+		return hudCmd(args[1:])
 	case "upgrade":
 		return upgradeCmd(args[1:])
 	case "uninstall":

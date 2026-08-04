@@ -14,13 +14,16 @@ import (
 
 // hookTimeouts bounds each event. PreToolUse sits in front of every tool call
 // and must stay imperceptible; PostToolUse may shell out to a formatter on a
-// cold cache and needs room.
+// cold cache and needs room. Stop and SessionEnd fire infrequently but
+// retryguard reads the transcript tail, so they need a few seconds of slack.
 var hookTimeouts = map[string]int{
 	payload.EventPreToolUse:         10,
 	payload.EventPostToolUse:        30,
 	payload.EventPostToolUseFailure: 30,
 	payload.EventSessionStart:       15,
+	payload.EventSessionEnd:         5,
 	payload.EventUserPromptSubmit:   5,
+	payload.EventStop:               10,
 }
 
 // buildSpecs derives the settings.json entries from the routes the binary
@@ -140,17 +143,41 @@ func initCmd(args []string) int {
 		return 1
 	}
 
+	// statusLine is a top-level field, not a hook event. Inject it
+	// separately so HUD can render without competing with the hook merge.
+	// Only meaningful when we are installing, not uninstalling.
+	statusPlan := (*installer.Plan)(nil)
+	if !*uninstall {
+		command, _ := resolveCommand(*noAbsPath, *force)
+		statusPlan, err = installer.EnsureStatusLine(path, installer.StatusLineConfig{
+			Type:    "command",
+			Command: command + " hud",
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+	}
+
 	action := "Installing"
 	if *uninstall {
 		action = "Removing"
 	}
 	fmt.Printf("%s claude-toolkit hooks in %s\n\n", action, path)
 
-	if !plan.Changed() {
+	if !plan.Changed() && (statusPlan == nil || !statusPlan.Changed()) {
 		fmt.Println("Already up to date; nothing to do.")
 		return 0
 	}
-	fmt.Println(plan.Summary())
+	if plan.Changed() {
+		fmt.Println(plan.Summary())
+	}
+	if statusPlan != nil && statusPlan.Changed() {
+		fmt.Println("  + statusLine (HUD)")
+	}
+	if statusPlan != nil && statusPlan.StatusLineKept != "" {
+		fmt.Println("  · statusLine: kept existing (" + statusPlan.StatusLineKept + "); HUD will not render until you switch")
+	}
 
 	if *dryRun {
 		fmt.Printf("\nResulting hooks section:\n\n%s\n\n(dry run -- nothing written)\n", plan.HooksJSON())
@@ -163,6 +190,12 @@ func initCmd(args []string) int {
 	if err := plan.Apply(); err != nil {
 		fmt.Fprintf(os.Stderr, "\nerror: %v\n", err)
 		return 1
+	}
+	if statusPlan != nil {
+		if err := statusPlan.Apply(); err != nil {
+			fmt.Fprintf(os.Stderr, "\nerror: %v\n", err)
+			return 1
+		}
 	}
 
 	fmt.Println()
