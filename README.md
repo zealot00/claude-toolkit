@@ -271,7 +271,7 @@ A Bash command that fails three times in a row (exit code ≠ 0, recorded on Pos
 
 ### PreToolUse+PostToolUse — notify (opt-in)
 
-Set `CLAUDE_TOOLKIT_NOTIFY=<seconds>` to get an OS desktop notification (macOS `osascript` / Linux `notify-send`) plus a terminal bell when a tool call runs longer than that or fails. Off by default.
+Set `CLAUDE_TOOLKIT_NOTIFY=<seconds>` to get an OS desktop notification (macOS `osascript` / Linux `notify-send` / Windows `msg *`) plus a terminal bell when a tool call runs longer than that or fails. Off by default. Note: on Windows Server Core / headless RDP (session-0 isolation) `msg *` is silent and only the terminal bell fires.
 
 ---
 

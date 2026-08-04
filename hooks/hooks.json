@@ -1,42 +1,45 @@
 {
-  "PreToolUse": [
-    {
-      "matcher": "^(Bash|Write|Edit|MultiEdit|NotebookEdit)$",
-      "hooks": [
-        { "type": "command", "command": "claude-toolkit run --event=pre", "timeout": 10 }
-      ]
-    }
-  ],
-  "PostToolUse": [
-    {
-      "matcher": "^(Write|Edit|NotebookEdit)$",
-      "hooks": [
-        { "type": "command", "command": "claude-toolkit run --event=post", "timeout": 30 }
-      ]
-    }
-  ],
-  "PostToolUseFailure": [
-    {
-      "matcher": "^(Bash)$",
-      "hooks": [
-        { "type": "command", "command": "claude-toolkit run --event=failure", "timeout": 30 }
-      ]
-    }
-  ],
-  "SessionStart": [
-    {
-      "matcher": "*",
-      "hooks": [
-        { "type": "command", "command": "claude-toolkit run --event=session", "timeout": 15 }
-      ]
-    }
-  ],
-  "UserPromptSubmit": [
-    {
-      "matcher": "*",
-      "hooks": [
-        { "type": "command", "command": "claude-toolkit run --event=prompt", "timeout": 5 }
-      ]
-    }
-  ]
+  "description": "claude-toolkit guardrail and productivity hooks. Per-capability enable/disable is controlled by `claude-toolkit manage`, stored in the toolkit's private config; these hooks always run and the runtime filters disabled capabilities.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^(Bash|Write|Edit|MultiEdit|NotebookEdit)$",
+        "hooks": [
+          { "type": "command", "command": "claude-toolkit run --event=pre", "timeout": 10 }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "^(Write|Edit|NotebookEdit)$",
+        "hooks": [
+          { "type": "command", "command": "claude-toolkit run --event=post", "timeout": 30 }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "^(Bash)$",
+        "hooks": [
+          { "type": "command", "command": "claude-toolkit run --event=failure", "timeout": 30 }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "claude-toolkit run --event=session", "timeout": 15 }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "claude-toolkit run --event=prompt", "timeout": 5 }
+        ]
+      }
+    ]
+  }
 }

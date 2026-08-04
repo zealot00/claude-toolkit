@@ -61,6 +61,11 @@ var notifySend = func(title, message string) {
 	case "windows":
 		// msg broadcasts to the interactive session and ships with Windows;
 		// /TIME:5 avoids a hang waiting for acknowledgment.
+		//
+		// Known limitation: msg * reaches the interactive console session
+		// only. Under session-0 isolation (Windows Server Core, headless RDP,
+		// service contexts) it is silent — users on those configurations get
+		// just the terminal bell (\a) and should not rely on a popup.
 		_ = exec.Command("msg", "*", "/TIME:5", title+" - "+msg).Run()
 	}
 	// Terminal bell on stderr: hook stdout must stay pure JSON.

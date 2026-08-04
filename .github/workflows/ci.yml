@@ -83,3 +83,19 @@ jobs:
           .\bin\claude-toolkit.exe manage list --scope=project --project-dir="$dir"
           .\bin\claude-toolkit.exe doctor --scope=project --project-dir="$dir" | Out-Null
           .\bin\claude-toolkit.exe uninstall --scope=project --project-dir="$dir" | Out-Null
+
+  # Plugin files are hand-written; validate their structure on every change.
+  # The python check is the hard gate (zero deps); the claude CLI check runs
+  # as an additional signal (npm install may be slow, so it is allowed to
+  # fail without failing the job).
+  plugin-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Structural validation (zero-dependency)
+        run: python3 scripts/validate-plugin.py
+      - name: Validate with the claude CLI
+        continue-on-error: true
+        run: |
+          npm install -g @anthropic-ai/claude-code >/dev/null 2>&1
+          claude plugin validate .

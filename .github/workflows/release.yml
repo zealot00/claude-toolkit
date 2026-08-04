@@ -27,3 +27,19 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Fill the REPLACE_WITH_*_SHA256 placeholders in packaging/ from the
+      # release's checksums.txt and push the result back to main. The
+      # GITHUB_TOKEN push does not re-trigger this workflow.
+      - name: Fill packaging checksums
+        run: |
+          bash scripts/fill-checksums.sh dist/checksums.txt "${{ github.ref_name }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ -n "$(git status --porcelain packaging/)" ]; then
+            git add packaging/
+            git commit -m "chore: fill packaging checksums for ${{ github.ref_name }}"
+            git push
+          else
+            echo "packaging already up to date"
+          fi
