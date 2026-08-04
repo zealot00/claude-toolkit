@@ -92,7 +92,9 @@ func TestNotifyFiresOnFailure(t *testing.T) {
 	if _, err := notifier(context.Background(), bashEvent(payload.EventPreToolUse, "false", nil)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := notifier(context.Background(), bashEvent(payload.EventPostToolUse, "false", responseWithExit(1))); err != nil {
+	// Real tool_response has no exitCode: failure is signalled by the
+	// PostToolUseFailure event.
+	if _, err := notifier(context.Background(), bashEvent(payload.EventPostToolUseFailure, "false", nil)); err != nil {
 		t.Fatal(err)
 	}
 	if called != 1 {

@@ -74,19 +74,20 @@ func loopGuard(_ context.Context, e *payload.Event) (*payload.Response, error) {
 			entry.Fails, entry.Exit)), nil
 
 	case payload.EventPostToolUse:
-		logFirstBashResponse(e.ToolResponse)
-		exit, ok := parseExitCode(e.ToolResponse)
-		if !ok {
-			return nil, nil // could not read the exit status; do not guess
-		}
+		// Real Bash tool_response has no exitCode field (measured keys:
+		// interrupted, isImage, noOutputExpected, stderr, stdout). Reaching
+		// PostToolUse with the call not interrupted means the command ran to
+		// completion -- success, which clears the streak. A user/Claude
+		// interrupt counts as a failure. Non-zero exits are signalled by the
+		// PostToolUseFailure event instead (handled below).
 		st := loadLoopState(path)
 		entry := st.Commands[in.Command]
-		if exit == 0 {
-			entry.Fails = 0 // a success clears the streak
-		} else {
+		if isInterrupted(e.ToolResponse) {
 			entry.Fails++
+			entry.Exit = 130
+		} else {
+			entry.Fails = 0 // a completed run clears the streak
 		}
-		entry.Exit = exit
 		st.Commands[in.Command] = entry
 		saveLoopState(path, st)
 		return nil, nil
@@ -145,37 +146,26 @@ func saveLoopState(path string, st loopState) {
 	_ = os.Rename(tmp, path)
 }
 
-// parseExitCode reads the Bash tool's exit status from its tool_response. The
-// field appears as exit_code / exitCode depending on the version; interrupted
-// counts as a failure (130). ok=false when the status cannot be determined.
-func parseExitCode(toolResponse json.RawMessage) (int, bool) {
+// isInterrupted reports whether tool_response marks the call as interrupted
+// by the user or by Claude. The real Bash tool_response carries an
+// "interrupted" boolean; it carries no exit code (see the PostToolUse
+// handler), which is why interruption is the only failure signal available
+// on this event.
+func isInterrupted(toolResponse json.RawMessage) bool {
 	if len(toolResponse) == 0 {
-		return 0, false
+		return false
 	}
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(toolResponse, &m); err != nil {
-		return 0, false
+		return false
 	}
-	for _, key := range []string{"exit_code", "exitCode", "exitcode", "ExitCode"} {
-		if raw, ok := m[key]; ok {
-			var n int
-			if err := json.Unmarshal(raw, &n); err == nil {
-				return n, true
-			}
-			var f float64
-			if err := json.Unmarshal(raw, &f); err == nil {
-				return int(f), true
-			}
-		}
-	}
-	// A tool call the user or Claude interrupted is a failure, not a pass.
 	if raw, ok := m["interrupted"]; ok {
 		var b bool
-		if err := json.Unmarshal(raw, &b); err == nil && b {
-			return 130, true
+		if err := json.Unmarshal(raw, &b); err == nil {
+			return b
 		}
 	}
-	return 0, false
+	return false
 }
 
 // logFirstBashResponse dumps the raw tool_response JSON from the first Bash

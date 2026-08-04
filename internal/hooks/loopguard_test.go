@@ -38,9 +38,10 @@ func TestLoopGuardBlocksAfterThreeFailures(t *testing.T) {
 	withIsolatedHome(t)
 	const cmd = "go test ./flaky"
 
-	// Two failures: no opinion.
+	// Two failures: no opinion. Failures are signalled by the official
+	// PostToolUseFailure event (the real tool_response has no exitCode).
 	for i := 0; i < 2; i++ {
-		resp, err := loopGuard(context.Background(), bashEvent(payload.EventPostToolUse, cmd, responseWithExit(1)))
+		resp, err := loopGuard(context.Background(), bashEvent(payload.EventPostToolUseFailure, cmd, nil))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -57,7 +58,7 @@ func TestLoopGuardBlocksAfterThreeFailures(t *testing.T) {
 	}
 
 	// Third failure: the next PreToolUse run is denied.
-	if _, err := loopGuard(context.Background(), bashEvent(payload.EventPostToolUse, cmd, responseWithExit(1))); err != nil {
+	if _, err := loopGuard(context.Background(), bashEvent(payload.EventPostToolUseFailure, cmd, nil)); err != nil {
 		t.Fatal(err)
 	}
 	pre, err = loopGuard(context.Background(), bashEvent(payload.EventPreToolUse, cmd, nil))
@@ -74,12 +75,14 @@ func TestLoopGuardSuccessResetsStreak(t *testing.T) {
 	const cmd = "pytest -x"
 
 	for i := 0; i < 3; i++ {
-		if _, err := loopGuard(context.Background(), bashEvent(payload.EventPostToolUse, cmd, responseWithExit(1))); err != nil {
+		if _, err := loopGuard(context.Background(), bashEvent(payload.EventPostToolUseFailure, cmd, nil)); err != nil {
 			t.Fatal(err)
 		}
 	}
-	// A success clears the ledger, so the next run is allowed.
-	if _, err := loopGuard(context.Background(), bashEvent(payload.EventPostToolUse, cmd, responseWithExit(0))); err != nil {
+	// A completed PostToolUse (real structure: no exitCode, not interrupted)
+	// clears the ledger, so the next run is allowed.
+	realResponse := json.RawMessage(`{"stdout":"2 passed","stderr":"","interrupted":false,"isImage":false}`)
+	if _, err := loopGuard(context.Background(), bashEvent(payload.EventPostToolUse, cmd, realResponse)); err != nil {
 		t.Fatal(err)
 	}
 	pre, err := loopGuard(context.Background(), bashEvent(payload.EventPreToolUse, cmd, nil))
@@ -97,7 +100,7 @@ func TestLoopGuardDifferentCommandUnaffected(t *testing.T) {
 	const other = "go test ./b"
 
 	for i := 0; i < 3; i++ {
-		if _, err := loopGuard(context.Background(), bashEvent(payload.EventPostToolUse, failing, responseWithExit(1))); err != nil {
+		if _, err := loopGuard(context.Background(), bashEvent(payload.EventPostToolUseFailure, failing, nil)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -127,18 +130,26 @@ func TestLoopGuardInterruptedCountsAsFailure(t *testing.T) {
 	}
 }
 
-func TestLoopGuardMissingExitCodeDoesNotRecord(t *testing.T) {
+// TestLoopGuardCompletionResetsStreak: a PostToolUse that is not interrupted
+// means the command ran to completion (real tool_response has no exitCode) --
+// it clears a prior failure streak.
+func TestLoopGuardCompletionResetsStreak(t *testing.T) {
 	withIsolatedHome(t)
-	// No exit_code field: the ledger must not be touched.
-	if _, err := loopGuard(context.Background(), bashEvent(payload.EventPostToolUse, "some cmd", json.RawMessage(`{"stdout":"x"}`))); err != nil {
+	const cmd = "some cmd"
+	for i := 0; i < 2; i++ {
+		if _, err := loopGuard(context.Background(), bashEvent(payload.EventPostToolUseFailure, cmd, nil)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := loopGuard(context.Background(), bashEvent(payload.EventPostToolUse, cmd, json.RawMessage(`{"stdout":"x"}`))); err != nil {
 		t.Fatal(err)
 	}
-	pre, err := loopGuard(context.Background(), bashEvent(payload.EventPreToolUse, "some cmd", nil))
+	pre, err := loopGuard(context.Background(), bashEvent(payload.EventPreToolUse, cmd, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if pre != nil {
-		t.Fatalf("an unrecorded run must not block, got %+v", pre)
+		t.Fatalf("a completed run must clear the streak, got %+v", pre)
 	}
 }
 
@@ -163,26 +174,25 @@ func TestLoopGuardStateFileMode(t *testing.T) {
 	}
 }
 
-func TestParseExitCodeVariants(t *testing.T) {
+// TestIsInterrupted: the real tool_response has no exitCode; interruption is
+// the only failure signal on PostToolUse.
+func TestIsInterrupted(t *testing.T) {
 	cases := []struct {
 		name string
 		raw  json.RawMessage
-		want int
-		ok   bool
+		want bool
 	}{
-		{"exit_code", json.RawMessage(`{"exit_code":1}`), 1, true},
-		{"exitCode", json.RawMessage(`{"exitCode":2}`), 2, true},
-		{"ExitCode", json.RawMessage(`{"ExitCode":3}`), 3, true},
-		{"float exit_code", json.RawMessage(`{"exit_code":1.0}`), 1, true},
-		{"interrupted", json.RawMessage(`{"interrupted":true}`), 130, true},
-		{"missing", json.RawMessage(`{"stdout":"x"}`), 0, false},
-		{"empty", nil, 0, false},
+		{"interrupted true", json.RawMessage(`{"interrupted":true}`), true},
+		{"interrupted false", json.RawMessage(`{"interrupted":false,"stdout":"ok"}`), false},
+		{"real structure", json.RawMessage(`{"stdout":"ok","stderr":"","interrupted":false,"isImage":false,"noOutputExpected":false}`), false},
+		{"missing", json.RawMessage(`{"stdout":"x"}`), false},
+		{"empty", nil, false},
+		{"not an object", json.RawMessage(`"string"`), false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, ok := parseExitCode(tc.raw)
-			if ok != tc.ok || (ok && got != tc.want) {
-				t.Errorf("parseExitCode(%s) = %d, %v; want %d, %v", tc.raw, got, ok, tc.want, tc.ok)
+			if got := isInterrupted(tc.raw); got != tc.want {
+				t.Errorf("isInterrupted(%s) = %v, want %v", tc.raw, got, tc.want)
 			}
 		})
 	}

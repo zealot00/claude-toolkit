@@ -20,9 +20,9 @@ import (
 )
 
 // Notifier is the "notify" capability. It records when a tool call starts
-// (PreToolUse) and, on PostToolUse, fires an OS desktop notification plus a
-// terminal bell when the call ran longer than the configured threshold OR
-// failed outright.
+// (PreToolUse) and, on PostToolUse / PostToolUseFailure, fires an OS desktop
+// notification plus a terminal bell when the call ran longer than the
+// configured threshold, or failed.
 //
 // It is OFF by default: set CLAUDE_TOOLKIT_NOTIFY=<seconds> to enable. Hook
 // processes are separate invocations, so the start timestamp is persisted in
@@ -30,7 +30,7 @@ import (
 func Notifier() *dispatcher.Route {
 	return &dispatcher.Route{
 		Name:    "notify",
-		Events:  []string{payload.EventPreToolUse, payload.EventPostToolUse},
+		Events:  []string{payload.EventPreToolUse, payload.EventPostToolUse, payload.EventPostToolUseFailure},
 		Handler: notifier,
 	}
 }
@@ -100,7 +100,7 @@ func notifier(_ context.Context, e *payload.Event) (*payload.Response, error) {
 		st := loadNotifyState(path)
 		st.Timestamps[key] = time.Now().UnixMilli()
 		saveNotifyState(path, st)
-	case payload.EventPostToolUse:
+	case payload.EventPostToolUse, payload.EventPostToolUseFailure:
 		st := loadNotifyState(path)
 		start, ok := st.Timestamps[key]
 		delete(st.Timestamps, key)
@@ -109,10 +109,9 @@ func notifier(_ context.Context, e *payload.Event) (*payload.Response, error) {
 		}
 		elapsed := time.Duration(time.Now().UnixMilli()-start) * time.Millisecond
 
-		failed := false
-		if exit, ok := parseExitCode(e.ToolResponse); ok && exit != 0 {
-			failed = true
-		}
+		// The real tool_response has no exitCode; PostToolUseFailure is the
+		// official failure signal (an interrupt also counts as failure).
+		failed := e.HookEventName == payload.EventPostToolUseFailure || isInterrupted(e.ToolResponse)
 		if elapsed < threshold && !failed {
 			return nil, nil
 		}

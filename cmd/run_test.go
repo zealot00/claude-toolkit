@@ -208,7 +208,7 @@ func TestBuildSpecsMatchesRoutes(t *testing.T) {
 		"heal":      {"PostToolUse"},
 		"enrich":    {"SessionStart", "UserPromptSubmit"},
 		"loopguard": {"PreToolUse", "PostToolUse", "PostToolUseFailure"},
-		"notify":    {"PreToolUse", "PostToolUse"},
+		"notify":    {"PreToolUse", "PostToolUse", "PostToolUseFailure"},
 		"envfix":    {"PreToolUse"},
 	}
 	covered := map[string][]string{}
