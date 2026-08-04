@@ -7,11 +7,9 @@ import (
 	"net"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/zealot00/claude-toolkit/internal/capcfg"
@@ -59,31 +57,14 @@ func Autoproxy() *dispatcher.Route {
 const autoProxyListen = proxy.DefaultListen // 127.0.0.1:8080
 
 // Seams for tests. Production code calls os.Executable, exec.Command, and
-// syscall.Kill; tests stub these to assert wiring without spawning real
-// processes or terminating the test binary.
+// a platform-specific kill primitive (see autoproxy_unix.go /
+// autoproxy_windows.go); tests stub these to assert wiring without
+// spawning real processes or terminating the test binary.
 var (
 	executablePath = os.Executable
 	startChild     = startProxyChild
 	terminatePID   = defaultTerminatePID
 )
-
-// startProxyChild builds the exec.Cmd for the proxy child and starts it.
-// Kept as a package var so tests can substitute a recorder. The cmd's env
-// is stripped of HTTPS_PROXY/HTTP_PROXY/ALL_PROXY so the child reaches its
-// upstream directly even when the parent is configured to use a network
-// proxy.
-func startProxyChild(self, listen, upstream string) (*exec.Cmd, error) {
-	cmd := exec.Command(self, "proxy",
-		"--listen="+listen,
-		"--upstream="+upstream,
-	)
-	cmd.Env = childEnv()
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if err := cmd.Start(); err != nil {
-		return nil, err
-	}
-	return cmd, nil
-}
 
 // childEnv returns the inherited environment with proxy keys removed.
 // Inheriting everything else keeps the child portable across shells and CI
@@ -106,13 +87,6 @@ func childEnv() []string {
 		out = append(out, kv)
 	}
 	return out
-}
-
-// defaultTerminatePID sends SIGTERM to the process group rooted at pid, so
-// any grandchildren are also signalled. Returns an error so callers can
-// fall back to SIGKILL if needed.
-func defaultTerminatePID(pid int) error {
-	return syscall.Kill(-pid, syscall.SIGTERM)
 }
 
 func autoProxy(ctx context.Context, e *payload.Event) (*payload.Response, error) {
@@ -239,9 +213,10 @@ func autoProxyEnd(_ context.Context, _ *payload.Event) (*payload.Response, error
 		_ = os.Remove(pidPath)
 		return nil, nil
 	}
-	if err := terminatePID(pid); err != nil && !errors.Is(err, syscall.ESRCH) {
-		// Process is gone (ESRCH) is fine -- the previous attempt at
-		// cleanup already worked. Any other error we surface as a hint
+	if err := terminatePID(pid); err != nil && !errors.Is(err, errProcessNotFound) {
+		// Process is gone (errProcessNotFound, which is syscall.ESRCH on
+		// Unix and a sentinel on Windows) is fine -- the previous attempt
+		// at cleanup already worked. Any other error we surface as a hint
 		// but do not abort the hook.
 		if err := hudstate.Save(hudstate.State{
 			Retry: hudstate.RetryOff,
