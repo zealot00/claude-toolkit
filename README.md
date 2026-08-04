@@ -220,6 +220,7 @@ Ask for what you want in plain language — "show the hooks", "disable format", 
 | `heal` | PostToolUse | points Claude at `claude-toolkit test` when tests cover the file |
 | `enrich` | SessionStart, UserPromptSubmit | injects git / toolchain / working-tree state |
 | `notify` | Pre+PostToolUse | desktop notification for slow or failed calls (opt-in) |
+| `envfix` | PreToolUse | rewrites bare `python`/`pip`/`pytest`/`node`/`npm` calls to the project's `.venv` when one exists |
 
 ---
 
@@ -267,11 +268,15 @@ After Claude writes a `.go`/`.py` file that has tests (a sibling `*_test.go` or 
 
 ### PreToolUse+PostToolUse — loopguard
 
-A Bash command that fails three times in a row (exit code ≠ 0, recorded on PostToolUse) is blocked on the next attempt with a diagnostic. Any success resets the count. The ledger lives in `~/.claude-toolkit/state/`, not `/tmp`.
+A Bash command that fails three times in a row is blocked on the next attempt with a diagnostic. Failures are recorded by the official `PostToolUseFailure` event — the real Bash `tool_response` carries no exit code; an interrupted run also counts as a failure. Any run that completes on `PostToolUse` clears the count. The ledger lives in `~/.claude-toolkit/state/`, not `/tmp`.
 
 ### PreToolUse+PostToolUse — notify (opt-in)
 
 Set `CLAUDE_TOOLKIT_NOTIFY=<seconds>` to get an OS desktop notification (macOS `osascript` / Linux `notify-send` / Windows `msg *`) plus a terminal bell when a tool call runs longer than that or fails. Off by default. Note: on Windows Server Core / headless RDP (session-0 isolation) `msg *` is silent and only the terminal bell fires.
+
+### PreToolUse — envfix
+
+When a project has a local virtual environment (`.venv`/`venv`), rewrites bare interpreter invocations — `python`, `pip`, `pytest`, `node`, `npm`, `npx`, `yarn`, `pnpm`, `bun` — to their `.venv/bin` equivalents, so Claude uses the project's pinned toolchain instead of a system interpreter. Only *bare* command names are rewritten: `/usr/bin/python`, `./tools/pytest` and compound commands with pipes, redirects, `&&` or `$(…)` are left alone. No venv → silent no-op. Caveat: some Claude Code versions silently drop the rewritten command, in which case the original command runs unmodified (fail-open).
 
 ---
 
@@ -330,7 +335,27 @@ Each event's matcher is derived from the routes the binary actually registers, s
 | --- | --- |
 | `CLAUDE_TOOLKIT_DEBUG` | When set, `run` appends diagnostics to `~/.claude/claude-toolkit.log`. Hook stdout is reserved for the JSON response, so this is where errors go. |
 
-To disable the toolkit without uninstalling, run `claude-toolkit init --uninstall` and restart Claude Code.
+---
+
+## Uninstall
+
+Remove the toolkit and all its hooks:
+
+```sh
+# Remove the toolkit's hook entries from settings.json (restart Claude Code afterwards)
+claude-toolkit uninstall
+
+# Also delete the toolkit's private state (~/.claude-toolkit/: loopguard ledger,
+# notify timestamps, capability switches)
+claude-toolkit uninstall --purge-config
+
+# Equivalent form
+claude-toolkit init --uninstall
+```
+
+Verify removal with `claude-toolkit doctor` — the hook-registration check will report that hooks are no longer registered.
+
+`uninstall` removes **only** the toolkit's own entries; everything else in settings.json (your `env`, `enabledPlugins`, other tools' hooks) stays byte-for-byte. `--purge-config` additionally deletes `~/.claude-toolkit/`. Restart Claude Code for the change to take effect.
 
 ---
 
@@ -445,6 +470,15 @@ make help       # list targets
 `init` and `doctor` pick up the new route automatically — there is no second place to update. A capability that listens on two events (like `loopguard` and `notify`, which record on PostToolUse and block on PreToolUse) is one route with both events in `Events`; each matcher group in settings.json still carries a single `--cap` name.
 
 The standalone command packages (`internal/testloc`, `internal/astsum`, `internal/proxy`) are pure libraries with no hook wiring; `cmd/` exposes them as subcommands (`test`, `ast`, `proxy`).
+
+### Using hooks alongside other tools
+
+The toolkit registers its own matcher groups in settings.json and never touches foreign entries. Other tools can register hooks on the **same events** — Claude Code runs them in parallel. Two ways to extend:
+
+- **Alongside (no fork)**: add your own hook entries to settings.json under the same events. They run independently; `init` and `manage` never strip or modify foreign entries.
+- **Inside the toolkit (fork)**: add a `dispatcher.Route` in `internal/hooks/` and register it in `registry.go`. `init` and `doctor` pick it up automatically — this is the supported path for Go-level integration.
+
+The `dispatcher` and `payload` packages are `internal/` by design: the toolkit ships as a **single binary, not a library**, so third-party Go imports are intentionally not supported. Forking is the documented extension path.
 
 ### Debugging
 
