@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/zealot00/claude-toolkit/internal/payload"
+	"github.com/zealot00/claude-toolkit/pkg/dir"
 )
 
 // withIsolatedHome points CLAUDE_TOOLKIT_HOME at a temp dir so loop-guard
@@ -230,5 +231,65 @@ func TestLoopGuardFailureEventResetBySuccess(t *testing.T) {
 	}
 	if pre != nil {
 		t.Fatalf("success must reset the failure streak, got %+v", pre)
+	}
+}
+
+// TestLogFirstBashResponseIsIdempotent verifies that the tool_response dump
+// is written once and never overwritten. The hook runs on every Bash
+// PostToolUse — without idempotency the log would churn the disk and dilute
+// the captured sample with later variants.
+func TestLogFirstBashResponseIsIdempotent(t *testing.T) {
+	withIsolatedHome(t)
+
+	root, err := dir.Root()
+	if err != nil {
+		t.Fatalf("dir.Root: %v", err)
+	}
+	logDir := filepath.Join(root, "log")
+	target := filepath.Join(logDir, "bash-response-fields.json")
+	sentinel := filepath.Join(logDir, "bash-response-fields.json.sampled")
+
+	first := responseWithExit(0)
+	logFirstBashResponse(first)
+	data1, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("first dump missing: %v", err)
+	}
+	sent1, err := os.ReadFile(sentinel)
+	if err != nil {
+		t.Fatalf("sentinel missing after first dump: %v", err)
+	}
+
+	// A different shape (exit code 1) — second call must NOT overwrite.
+	second := responseWithExit(1)
+	logFirstBashResponse(second)
+	data2, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("second read: %v", err)
+	}
+	if string(data1) != string(data2) {
+		t.Fatalf("dump was rewritten on second call — idempotency broken")
+	}
+	sent2, err := os.ReadFile(sentinel)
+	if err != nil {
+		t.Fatalf("sentinel missing after second dump: %v", err)
+	}
+	if string(sent1) != string(sent2) {
+		t.Fatalf("sentinel was rewritten on second call — idempotency broken")
+	}
+
+	// Sanity: the dump is well-formed and lists the keys we put in.
+	var parsed struct {
+		Keys     []string          `json:"keys"`
+		KeyTypes map[string]string `json:"key_types"`
+	}
+	if err := json.Unmarshal(data1, &parsed); err != nil {
+		t.Fatalf("dump is not valid JSON: %v\n%s", err, data1)
+	}
+	if len(parsed.Keys) != 1 || parsed.Keys[0] != "exit_code" {
+		t.Errorf("keys = %v, want [exit_code]", parsed.Keys)
+	}
+	if parsed.KeyTypes["exit_code"] != "number" {
+		t.Errorf("key_types[exit_code] = %q, want \"number\"", parsed.KeyTypes["exit_code"])
 	}
 }

@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
+	"time"
 
 	"github.com/zealot00/claude-toolkit/internal/dispatcher"
 	"github.com/zealot00/claude-toolkit/internal/payload"
@@ -71,6 +74,7 @@ func loopGuard(_ context.Context, e *payload.Event) (*payload.Response, error) {
 			entry.Fails, entry.Exit)), nil
 
 	case payload.EventPostToolUse:
+		logFirstBashResponse(e.ToolResponse)
 		exit, ok := parseExitCode(e.ToolResponse)
 		if !ok {
 			return nil, nil // could not read the exit status; do not guess
@@ -172,4 +176,102 @@ func parseExitCode(toolResponse json.RawMessage) (int, bool) {
 		}
 	}
 	return 0, false
+}
+
+// logFirstBashResponse dumps the raw tool_response JSON from the first Bash
+// PostToolUse event we see into ~/.claude-toolkit/log/bash-response-fields.json,
+// then marks a sentinel so subsequent calls are no-ops. This exists because
+// Claude Code's actual field name for the exit status (exit_code? exitCode?
+// interrupted?) drifts across versions and guessing wrong silently breaks
+// loopguard. Capturing one real payload settles the question.
+//
+// Failures here never propagate — this is best-effort telemetry; a write error
+// must not turn a passing hook into a failing one.
+func logFirstBashResponse(toolResponse json.RawMessage) {
+	root, err := dir.Root()
+	if err != nil {
+		return
+	}
+	logDir := filepath.Join(root, "log")
+	if err := os.MkdirAll(logDir, 0o700); err != nil {
+		return
+	}
+	sentinel := filepath.Join(logDir, "bash-response-fields.json.sampled")
+	if _, err := os.Stat(sentinel); err == nil {
+		return // already captured once; do not churn the file every Bash call
+	}
+
+	keys := map[string]json.RawMessage{}
+	if len(toolResponse) > 0 {
+		// A non-object tool_response would surprise us; record it as such.
+		_ = json.Unmarshal(toolResponse, &keys)
+	}
+	keyNames := make([]string, 0, len(keys))
+	for k := range keys {
+		keyNames = append(keyNames, k)
+	}
+	sort.Strings(keyNames)
+
+	record := struct {
+		Timestamp string            `json:"timestamp"`
+		Keys      []string          `json:"keys"`
+		Raw       json.RawMessage   `json:"raw"`
+		KeyTypes  map[string]string `json:"key_types"`
+	}{
+		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
+		Keys:      keyNames,
+		Raw:       toolResponse,
+		KeyTypes:  inferKeyTypes(keys),
+	}
+
+	data, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		return
+	}
+	target := filepath.Join(logDir, "bash-response-fields.json")
+	tmp := target + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return
+	}
+	if err := os.Rename(tmp, target); err != nil {
+		return
+	}
+	// Best-effort sentinel so we do not rewrite on every Bash PostToolUse.
+	_ = os.WriteFile(sentinel, []byte(record.Timestamp), 0o600)
+}
+
+// inferKeyTypes reports the JSON type of each key's value so a human reading
+// the dump can see "this key is a number" vs "this key is a boolean" without
+// having to open the raw blob.
+func inferKeyTypes(m map[string]json.RawMessage) map[string]string {
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		out[k] = jsonType(v)
+	}
+	return out
+}
+
+// jsonType names the leading JSON token of v. It only needs to distinguish
+// the few shapes a Bash tool_response is plausibly made of.
+func jsonType(v json.RawMessage) string {
+	t := strings.TrimSpace(string(v))
+	if t == "" {
+		return "empty"
+	}
+	switch t[0] {
+	case '{':
+		return "object"
+	case '[':
+		return "array"
+	case '"':
+		return "string"
+	case 't', 'f':
+		return "bool"
+	case 'n':
+		return "null"
+	}
+	if (t[0] >= '0' && t[0] <= '9') || t[0] == '-' {
+		return "number"
+	}
+	return "unknown"
 }

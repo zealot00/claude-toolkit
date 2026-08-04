@@ -79,6 +79,7 @@ func doctorCmd(args []string) int {
 	if ok {
 		checkRegistration(rp, path)
 	}
+	checkPluginHooks(rp, dir)
 	checkSelfTest(rp)
 	checkCwdEnvFallback(rp, dir)
 	checkPlugin(rp, dir)
@@ -208,8 +209,9 @@ func checkRegistration(rp *report, path string) {
 		return
 	}
 	if len(entries) == 0 {
-		rp.fail("hook registration", "no claude-toolkit hooks found",
-			fmt.Sprintf("Run `%s init`.", binName))
+		// No entries in settings.json — but the plugin path may have
+		// registered hooks instead. checkPluginHooks will report that case
+		// as OK; here we only fail if neither path has hooks.
 		return
 	}
 
@@ -264,6 +266,84 @@ func checkRegistration(rp *report, path string) {
 	if legacy > 0 {
 		rp.warn("hook registration", fmt.Sprintf("%d legacy entr%s without --cap tags", legacy, plural(legacy)),
 			"Run `claude-toolkit init` to migrate to capability-tagged entries, then `manage` works on them.")
+	}
+}
+
+// checkPluginHooks verifies that hooks/hooks.json is present in any of the
+// plugin locations Claude Code auto-loads. The plugin's hooks.json is the
+// alternative registration path to settings.json: `init --scope=skills-*`
+// uses it, and `init` (default settings.json path) also copies the plugin
+// for the /toolkit slash command. When hooks are loaded via this path,
+// settings.json carries no claude-toolkit entries -- the previous check
+// would falsely fail.
+//
+// The plugin format is {"description": ..., "hooks": {<event>: [...]}}.
+// We confirm:
+//   - the file parses,
+//   - the registered events cover every event this binary handles,
+//   - the matcher for each event matches what this binary registers.
+func checkPluginHooks(rp *report, dir string) {
+	// Skip when settings.json registration already covers everything.
+	for _, r := range rp.results {
+		if r.label == "hook registration" && r.status == statusOK {
+			return
+		}
+	}
+
+	var candidates []string
+	if home, err := os.UserHomeDir(); err == nil {
+		candidates = append(candidates,
+			filepath.Join(home, ".claude", "skills", "claude-toolkit", "hooks", "hooks.json"),
+			filepath.Join(home, ".claude", "plugins", "claude-toolkit", "hooks", "hooks.json"),
+		)
+	}
+	candidates = append(candidates,
+		filepath.Join(dir, ".claude", "skills", "claude-toolkit", "hooks", "hooks.json"))
+
+	for _, path := range candidates {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var h struct {
+			Hooks map[string][]struct {
+				Matcher string `json:"matcher"`
+			} `json:"hooks"`
+		}
+		if err := json.Unmarshal(data, &h); err != nil {
+			rp.warn("plugin hooks", path, "hooks.json does not parse as JSON")
+			return
+		}
+		pluginHooks := h.Hooks
+		if pluginHooks == nil {
+			rp.warn("plugin hooks", path, "hooks.json missing top-level \"hooks\" object (plugin format)")
+			return
+		}
+
+		d := hooks.Register()
+		var missing []string
+		for _, ev := range d.Events() {
+			if _, ok := pluginHooks[ev]; !ok {
+				missing = append(missing, ev)
+			}
+		}
+		if len(missing) > 0 {
+			rp.warn("plugin hooks", fmt.Sprintf("%s -- missing %s", path, strings.Join(missing, ", ")),
+				fmt.Sprintf("Run `%s init` to refresh.", binName))
+			return
+		}
+		rp.ok("plugin hooks", fmt.Sprintf("%s -- %s", path, strings.Join(d.Events(), ", ")))
+		return
+	}
+	// No plugin hooks found and no settings.json entries (the latter check
+	// would have already failed). Surface a single clear failure pointing at
+	// the plugin path the user is most likely to want.
+	if home, err := os.UserHomeDir(); err == nil {
+		rp.fail("hook registration", "no claude-toolkit hooks in settings.json or plugin path",
+			fmt.Sprintf("Run `%s init` (writes to settings.json) or\n"+
+				"`%s init --scope=skills-user` (installs the auto-loading plugin).",
+				binName, binName))
+		_ = home
 	}
 }
 
