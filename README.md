@@ -195,20 +195,18 @@ A companion plugin lets you manage the toolkit without leaving Claude Code. Inst
 
 **Install the plugin** (choose one path):
 
-1. **`claude-toolkit init --scope=skills-user`** (recommended): copies the plugin into `~/.claude/skills/claude-toolkit/`, which Claude Code auto-loads for every project.
-2. **`claude-toolkit init --scope=skills-project`**: copies it into `<dir>/.claude/skills/claude-toolkit/` for one project (loads after the workspace is trusted).
-3. **`claude-toolkit init`** (default): writes hooks into `~/.claude/settings.json` and copies the plugin to `~/.claude/plugins/claude-toolkit/`.
+1. **`claude-toolkit init --scope=skills-user`** (recommended): copies the plugin into `~/.claude/skills/claude-toolkit/`, which Claude Code auto-loads for every project. The plugin ships `.claude-plugin/plugin.json`, `commands/toolkit.md` and `hooks/hooks.json`; its own hooks are the registration.
+2. **`claude-toolkit init --scope=skills-project`**: same as above, but into `<dir>/.claude/skills/claude-toolkit/` for one project (loads after the workspace is trusted).
+3. **`claude-toolkit init`** (default): writes hooks into `~/.claude/settings.json` and copies the plugin (without `hooks/hooks.json`) to `~/.claude/plugins/claude-toolkit/` so the `/toolkit` slash command is available.
 4. **`/plugin` in Claude Code**: point it at this repository's path (or an unpacked release archive).
 
-The plugin ships `.claude-plugin/plugin.json`, `commands/toolkit.md` and `hooks/hooks.json`. The plugin's own hooks fire once per event and their per-capability switch comes from `claude-toolkit manage` (stored in the toolkit's private config). Do **not** combine the plugin's hooks with `init`'s settings.json hooks — that would fire every event twice; `init` warns when it detects both. Restart the session, then:
+There is exactly one hook registration per capability — either `settings.json` (default `init`) or the plugin's own `hooks/hooks.json` (`--scope=skills-*`), never both. The `settings.json` path installs the plugin without hooks; the skills-* path uses the plugin's hooks. Restart the session, then:
 
 ```
 /toolkit
 ```
 
 Ask for what you want in plain language — "show the hooks", "disable format", "re-enable guard" — and Claude will call `claude-toolkit manage` and report back. `claude-toolkit doctor` (also run by the command) verifies the result.
-
-The plugin deliberately registers **no hooks of its own**. The hooks it manages are the ones `claude-toolkit init` writes into `~/.claude/settings.json`, so there is exactly one registration per capability — the plugin never double-fires alongside the toolkit.
 
 ### `/toolkit` capabilities
 

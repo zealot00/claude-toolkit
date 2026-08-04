@@ -15,19 +15,47 @@ import (
 // The source is the embed.FS main() wires into cmd via SetPluginAssets at
 // startup, so the binary is self-contained: `go install` users get the same
 // install flow as developers running from a checkout.
-func installPlugin(dryRun bool) (string, error) {
+// installPlugin copies the embedded Claude Code plugin payload into
+// ~/.claude/plugins/claude-toolkit/ so the /toolkit command works right after
+// `init`, without a manual copy.
+//
+// includeHooks=false is the default for the user/project/local init path:
+// hooks for that path live in settings.json, and shipping them inside the
+// plugin too would make Claude Code fire every event twice. Pass true only
+// when the install path is the skills-directory plugin (initSkillsScope),
+// where settings.json is never written and the plugin's own hooks/hooks.json
+// is the only hook registration.
+//
+// The source is the embed.FS main() wires into cmd via SetPluginAssets at
+// startup, so the binary is self-contained: `go install` users get the same
+// install flow as developers running from a checkout.
+func installPlugin(dryRun bool, includeHooks bool) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
 	dst := filepath.Join(home, ".claude", "plugins", "claude-toolkit")
+	dirs := pluginInstallDirs(includeHooks)
 	if dryRun {
 		return dst, nil
 	}
-	if err := copyFS(pluginAssetsFS, dst, []string{".claude-plugin", "commands", "hooks"}); err != nil {
+	if err := copyFS(pluginAssetsFS, dst, dirs); err != nil {
 		return "", err
 	}
 	return dst, nil
+}
+
+// pluginInstallDirs returns the embedded directories that installPlugin
+// should copy. The default-init path (user/project/local) skips hooks/:
+// settings.json already registers the hooks and shipping them inside the
+// plugin too would make Claude Code fire every event twice. The skills-*
+// path (initSkillsScope) calls copyFS directly with the full list.
+func pluginInstallDirs(includeHooks bool) []string {
+	dirs := []string{".claude-plugin", "commands"}
+	if includeHooks {
+		dirs = append(dirs, "hooks")
+	}
+	return dirs
 }
 
 // copyFS copies a fixed list of top-level directories from src (an embed.FS)

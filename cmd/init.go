@@ -137,7 +137,7 @@ func initCmd(args []string) int {
 
 	if *dryRun {
 		fmt.Printf("\nResulting hooks section:\n\n%s\n\n(dry run -- nothing written)\n", plan.HooksJSON())
-		if _, err := installPlugin(true); err == nil {
+		if _, err := installPlugin(true, false); err == nil {
 			fmt.Println("(dry run -- would also install the Claude Code plugin to ~/.claude/plugins/claude-toolkit/)")
 		}
 		return 0
@@ -161,8 +161,10 @@ func initCmd(args []string) int {
 	}
 
 	// The plugin is a convenience, not a requirement: `init` works without it,
-	// so a failed copy is a note, not an error.
-	if dst, err := installPlugin(false); err == nil {
+	// so a failed copy is a note, not an error. includeHooks=false because
+	// settings.json already registers the hooks -- shipping them inside the
+	// plugin too would make Claude Code fire every event twice.
+	if dst, err := installPlugin(false, false); err == nil {
 		fmt.Printf("Installed Claude Code plugin to %s (restart Claude Code, then /toolkit)\n", dst)
 	} else {
 		fmt.Printf("note: plugin not installed -- %v\n", err)

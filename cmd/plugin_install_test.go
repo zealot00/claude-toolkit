@@ -27,7 +27,7 @@ func TestInstallPluginCopiesTree(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 
-	dst, err := installPlugin(false)
+	dst, err := installPlugin(false, true)
 	if err != nil {
 		t.Fatalf("installPlugin: %v", err)
 	}
@@ -53,7 +53,7 @@ func TestInstallPluginDryRun(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 
-	dst, err := installPlugin(true)
+	dst, err := installPlugin(true, false)
 	if err != nil {
 		t.Fatalf("installPlugin dry-run: %v", err)
 	}
@@ -63,5 +63,30 @@ func TestInstallPluginDryRun(t *testing.T) {
 	}
 	if _, err := os.Stat(wantDst); err == nil {
 		t.Errorf("dry-run must not create %s", wantDst)
+	}
+}
+
+// TestPluginInstallDirsDefaultSkipsHooks locks in the fix for the default
+// `init` path: settings.json already registers the hooks, so the plugin
+// installed at ~/.claude/plugins/claude-toolkit/ must NOT carry its own
+// hooks/hooks.json -- Claude Code would otherwise load both and fire every
+// event twice. The skills-* path keeps the full list.
+func TestPluginInstallDirsDefaultSkipsHooks(t *testing.T) {
+	def := pluginInstallDirs(false)
+	for _, d := range def {
+		if d == "hooks" {
+			t.Errorf("default-init dirs must not include hooks/: %v", def)
+		}
+	}
+	// Sanity: skills-* path still ships hooks/.
+	withHooks := pluginInstallDirs(true)
+	found := false
+	for _, d := range withHooks {
+		if d == "hooks" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("skills-* dirs must include hooks/: %v", withHooks)
 	}
 }
