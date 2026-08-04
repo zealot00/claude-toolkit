@@ -203,8 +203,10 @@ A companion plugin lets you manage the toolkit without leaving Claude Code. Inst
 There is exactly one hook registration per capability — either `settings.json` (default `init`) or the plugin's own `hooks/hooks.json` (`--scope=skills-*`), never both. The `settings.json` path installs the plugin without hooks; the skills-* path uses the plugin's hooks. Restart the session, then:
 
 ```
-/toolkit
+/claude-toolkit:toolkit
 ```
+
+The fully qualified form `/claude-toolkit:toolkit` is the stable contract — Claude Code namespaced plugin commands as `<plugin>:<command>`. The bare `/toolkit` works only while no other plugin claims the name, so always use the qualified form in scripts and documentation.
 
 Ask for what you want in plain language — "show the hooks", "disable format", "re-enable guard" — and Claude will call `claude-toolkit manage` and report back. `claude-toolkit doctor` (also run by the command) verifies the result.
 
