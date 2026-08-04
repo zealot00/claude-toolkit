@@ -5,3 +5,4 @@
 .DS_Store
 .reasonix/
 reasonix.toml
+.claude-toolkit-handoff.md
