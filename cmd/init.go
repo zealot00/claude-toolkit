@@ -99,9 +99,21 @@ func initCmd(args []string) int {
 	}
 
 	// skills-* scopes install the auto-loading plugin directory instead of
-	// touching settings.json.
+	// touching settings.json. After the plugin install, also inject
+	// statusLine into the user's settings.json -- Claude Code reads it
+	// from the user-level settings, not from the plugin manifest, and the
+	// plugin install path does not get to set it.
 	if *scope == "skills-user" || *scope == "skills-project" {
-		return initSkillsScope(*scope, dir, *dryRun)
+		rc := initSkillsScope(*scope, dir, *dryRun)
+		if rc != 0 {
+			return rc
+		}
+		if !*uninstall {
+			if err := injectUserStatusLine(*dryRun); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: statusLine not injected: %v\n", err)
+			}
+		}
+		return rc
 	}
 
 	// Legacy settings.json paths (--scope=user|project|local). The plugin
@@ -289,4 +301,55 @@ func goBinDir() string {
 		return filepath.Join(home, "go", "bin")
 	}
 	return "$GOPATH/bin"
+}
+
+// injectUserStatusLine ensures ~/.claude/settings.json has a statusLine
+// pointing at `claude-toolkit hud`. The plugin-directory install path
+// (initSkillsScope) does not get to write this field -- the plugin
+// manifest carries no statusLine concept and Claude Code reads it from
+// the user-level settings.json only. This helper bridges that gap.
+//
+// Existing user-set statusLines are kept verbatim; the function reports
+// the conflict via the install summary so the user knows to flip their
+// own statusLine to use HUD.
+//
+// A failure here is reported as a warning, not a hard error: statusLine
+// is observability, and a config we cannot parse must not strand the
+// user's plugin install on a successful init.
+func injectUserStatusLine(dryRun bool) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("locate home: %w", err)
+	}
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+
+	command, err := resolveCommand(false, false)
+	if err != nil {
+		// Could not pin the absolute path; fall back to the bare
+		// bin name so init still completes. The hooks will not fire
+		// from a GUI-launched Claude Code without inherited PATH
+		// in that case, but that is the existing fall-back behaviour
+		// for the legacy scope, not a new failure introduced here.
+		command = binName
+	}
+
+	plan, err := installer.EnsureStatusLine(settingsPath, installer.StatusLineConfig{
+		Type:    "command",
+		Command: command + " hud",
+	})
+	if err != nil {
+		return err
+	}
+
+	if plan.StatusLineKept != "" {
+		fmt.Printf("  · statusLine: kept existing (%s); HUD will not render until you switch\n", plan.StatusLineKept)
+		return nil
+	}
+	if plan.Changed() {
+		fmt.Println("  + statusLine (HUD)")
+	}
+	if !dryRun && plan.Changed() {
+		return plan.Apply()
+	}
+	return nil
 }
