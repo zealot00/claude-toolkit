@@ -29,10 +29,15 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # Fill the REPLACE_WITH_*_SHA256 placeholders in packaging/ from the
-      # release's checksums.txt and push the result back to main. The
-      # GITHUB_TOKEN push does not re-trigger this workflow.
+      # release's checksums.txt and push the result back to main. We
+      # re-checkout main in a fresh step because the goreleaser step above
+      # leaves the working tree on a detached tag HEAD, and `git push`
+      # without an explicit ref fails there. The GITHUB_TOKEN push does
+      # not re-trigger this workflow.
       - name: Fill packaging checksums
         run: |
+          git checkout main
+          git pull --ff-only
           bash scripts/fill-checksums.sh dist/checksums.txt "${{ github.ref_name }}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
