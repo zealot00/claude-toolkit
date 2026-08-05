@@ -1,6 +1,6 @@
 ---
-description: Manage claude-toolkit hooks (list, enable, disable)
-argument-hint: [list | enable <capability> | disable <capability> | enable-all | disable-all | help]
+description: Manage claude-toolkit hooks and provider profiles
+argument-hint: [list | enable <capability> | disable <capability> | enable-all | disable-all | model [list|use|add|rm] | help]
 allowed-tools: Bash(claude-toolkit:*)
 ---
 
@@ -89,6 +89,12 @@ block — never edit settings.json by hand.
    --token <t> --model <m>` and `claude-toolkit model rm <name>`.
 4. Report the new active provider to the user and remind them to restart
    Claude Code (`claude --resume` keeps the session).
+
+> Always use the command-line forms above. **Never run bare `claude-toolkit
+> model` with no arguments from inside a Claude Code session** — that starts
+> the interactive picker and blocks waiting for a terminal keypress. When
+> the user invokes `/toolkit model` with no subcommand, treat it as `model
+> list`. The interactive TUI is for humans at a real terminal only.
 
 ## Rules
 

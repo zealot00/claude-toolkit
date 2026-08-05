@@ -114,6 +114,7 @@ Usage:
 Commands:
   init      Register the toolkit's hooks in ~/.claude/settings.json
   manage    List, enable or disable hook capabilities (also via /toolkit plugin)
+  model     Manage provider profiles and switch models (list, use, add, rm)
   test      Run incremental tests covering a source file (go test / pytest)
   ast       Print a compressed structural summary of a .go/.py file
   rules     List every built-in rule and its verdict
@@ -122,6 +123,7 @@ Commands:
   uninstall Remove the toolkit's hooks (--purge-config also deletes state)
   log       Tail the debug log written when CLAUDE_TOOLKIT_DEBUG is set
   doctor    Diagnose the installation and self-test every hook
+  hud       Render the ANSI status line (internal: Claude Code statusLine hook)
   run       Execute a hook; reads the event JSON on stdin (invoked by Claude Code)
   version   Print version information
 
