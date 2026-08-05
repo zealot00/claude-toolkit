@@ -72,6 +72,24 @@ toolkit's own CLI. Do **not** edit `~/.claude/settings.json` by hand.
 4. **Tell the user** that hooks load at session start, so they should restart
    Claude Code (or start a new session) for the change to take effect.
 
+## Model profiles (provider switching)
+
+The user may also ask to switch AI providers/models. The toolkit stores named
+provider profiles (`base URL` + `auth token` + `model`) in
+`<toolkit root>/profiles.json` and switches by rewriting the settings `env`
+block — never edit settings.json by hand.
+
+1. **Show profiles.** Run `claude-toolkit model list`. It marks the active
+   profile with `* active`; if the env points at a provider with no stored
+   profile it says so.
+2. **Switch.** Run `claude-toolkit model use <name>` (add `--scope=project`
+   to bind the switch to the current project only). The command writes the
+   env atomically and prints the restart reminder.
+3. **Add / remove.** `claude-toolkit model add --name <n> --base-url <u>
+   --token <t> --model <m>` and `claude-toolkit model rm <name>`.
+4. Report the new active provider to the user and remind them to restart
+   Claude Code (`claude --resume` keeps the session).
+
 ## Rules
 
 - Use the command-line forms above. Never rewrite the settings file yourself.

@@ -72,6 +72,8 @@ func Execute(args []string) int {
 		return initCmd(args[1:])
 	case "manage":
 		return manageCmd(args[1:])
+	case "model":
+		return modelCommand(args[1:])
 	case "test":
 		return testCmd(args[1:])
 	case "ast":

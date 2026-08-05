@@ -226,6 +226,7 @@ Run bare (`claude-toolkit manage`) for an interactive toggle UI in the terminal.
 | `proxy` | Optional local API proxy with 429 auto-retry (opt-in, not auto-wired) |
 | `upgrade [--check-only] [--skip-doctor] [--cleanup]` | Backs up the running binary, downloads + SHA-256-verifies the new release, atomically replaces it, runs `doctor` to verify (unless `--skip-doctor`), and rolls back automatically if anything goes wrong. On success, runs the schema-migration registry and prints `Run claude-toolkit init --force to refresh plugin and settings.json`. `--cleanup` removes the leftover `.bak` from a previous successful upgrade. |
 | `uninstall [--purge-config]` | Removes the toolkit's hooks (alias of `init --uninstall`) |
+| `model [list\|use\|add\|rm]` | Manages provider profiles (base URL + token + model) and switches atomically — see [Model profiles](#model-profiles) |
 | `log [--follow] [--event=…]` | Tails the debug log written under `CLAUDE_TOOLKIT_DEBUG` |
 
 ---
@@ -377,6 +378,31 @@ So `init` refuses to write a config it cannot verify, and tells you the three wa
 ### Matchers are narrow on purpose
 
 Each event's matcher is derived from the routes the binary actually registers, so the config cannot drift from the code — and Claude Code never spawns the process for a tool no route would have handled. `PreToolUse` matches `Bash|Write|Edit|NotebookEdit`, not `.*`.
+
+---
+
+## Model profiles
+
+Claude Code picks its provider at session start from `settings.json`'s `env` block (`ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` + `ANTHROPIC_MODEL` + the `ANTHROPIC_DEFAULT_*_MODEL` keys) — switching providers means editing that block and restarting. `claude-toolkit model` manages named provider profiles and does the switch atomically:
+
+```sh
+claude-toolkit model add --name mini --base-url https://api.minimaxi.com/anthropic --token sk-... --model MiniMax-M3
+claude-toolkit model use mini                      # switch globally (user scope)
+claude-toolkit model use claude --scope=project    # bind to this project only
+claude-toolkit model list                          # show profiles + which is active
+claude-toolkit model                               # interactive picker
+claude-toolkit model rm mini
+```
+
+`model use` writes the profile into the settings `env` block (removing any stale `ANTHROPIC_*` keys first) with the same backup → temp → fsync → rename guarantee as `init`, and prints a reminder to restart Claude Code (`claude --resume` keeps the session). The HUD status line shows the active provider: `● name model` (green, matches a profile), `○ custom host` (yellow, env not covered by a stored profile), or nothing when on default Anthropic auth.
+
+### Where profiles live — and how they stay safe
+
+- **Location**: `<toolkit root>/profiles.json` — `$CLAUDE_PLUGIN_DATA` when running as a plugin, else `~/.claude/plugins/data/claude-toolkit/` (legacy installs: `~/.claude-toolkit/`). Tokens never live in settings.json beyond the single active profile's env copy.
+- **Permissions**: the file is created `0600` (owner-only) because it holds API tokens. `uninstall --purge-config` deletes the toolkit root, and `/plugin uninstall` removes the whole plugin-data directory — back `profiles.json` up first if you rely on it.
+- **Atomic writes**: temp file + fsync + rename, so a crash cannot leave a truncated profile file; before each save the previous file is copied to `profiles.json.bak` for manual recovery.
+- **Settings writes reuse the installer guarantee**: `model use` goes through the same backup + atomic-write path as `init`.
+- **Validation**: `claude-toolkit doctor` reports whether the store parses and which profile (if any) matches the current env.
 
 ---
 

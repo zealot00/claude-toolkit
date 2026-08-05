@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/zealot00/claude-toolkit/internal/hudstate"
+	"github.com/zealot00/claude-toolkit/internal/profiles"
 	"github.com/zealot00/claude-toolkit/internal/tokenusage"
 )
 
@@ -24,8 +25,9 @@ import (
 func hudCmd(args []string) int {
 	transcriptPath := readTranscriptPath(os.Stdin)
 	hud, _ := hudstate.Load()
+	st, _ := profiles.Load() // best effort; renderModel tolerates nil
 	summary := tokenusage.Summarize(transcriptPath)
-	fmt.Fprintln(os.Stdout, renderHUD(hud, summary, transcriptPath != ""))
+	fmt.Fprintln(os.Stdout, renderHUD(hud, summary, transcriptPath != "", st))
 	return 0
 }
 
@@ -75,21 +77,22 @@ const (
 //
 // hasTranscript is true when the statusLine payload included a non-empty
 // transcript_path -- the caller already confirmed this so we can show the
-// token count or the placeholder.
-func renderHUD(h hudstate.State, t tokenusage.Summary, hasTranscript bool) string {
+// token count or the placeholder. st carries the provider profiles; nil is
+// tolerated (the model segment is skipped).
+func renderHUD(h hudstate.State, t tokenusage.Summary, hasTranscript bool, st *profiles.Store) string {
 	tokens := renderTokens(t, hasTranscript)
 	proxy := renderProxy(h.Proxy)
 	retry := renderRetry(h.Retry)
 	mode := renderMode(h.Mode)
-	return join4(tokens, proxy, retry, mode)
+	return join(tokens, proxy, retry, mode, renderModel(st))
 }
 
-// join4 concatenates four already-formatted segments with single spaces.
-// An empty segment is skipped so a missing field does not leave a visible
-// gap in the status line.
-func join4(a, b, c, d string) string {
+// join concatenates any number of already-formatted segments with single
+// spaces. An empty segment is skipped so a missing field does not leave a
+// visible gap in the status line.
+func join(parts ...string) string {
 	out := ""
-	for _, s := range []string{a, b, c, d} {
+	for _, s := range parts {
 		if s == "" {
 			continue
 		}
@@ -127,6 +130,38 @@ func renderProxy(p *hudstate.ProxyState) string {
 	}
 	body := fmt.Sprintf("[%s proxy %s:%d → %s]", filledGlyph, "127.0.0.1", p.Port, p.Upstream)
 	return ansiGreen + body + ansiReset
+}
+
+// renderModel shows the active provider segment: green when the settings env
+// matches a stored profile, yellow when the env points at a provider we do
+// not have a profile for, and nothing when no ANTHROPIC_BASE_URL is set
+// (Claude Code is on its default Anthropic auth).
+func renderModel(st *profiles.Store) string {
+	base := settingsEnvBaseURL()
+	if base == "" || st == nil {
+		return ""
+	}
+	if active := activeProfileName(st); active != "" {
+		p := st.Profiles[active]
+		return ansiGreen + fmt.Sprintf("[%s %s %s]", filledGlyph, active, shortModel(p["ANTHROPIC_MODEL"])) + ansiReset
+	}
+	return ansiYellow + fmt.Sprintf("[%s custom %s]", emptyGlyph, truncateHost(hostOf(base))) + ansiReset
+}
+
+// shortModel trims a long model id for the narrow status line.
+func shortModel(m string) string {
+	if len(m) <= 24 {
+		return m
+	}
+	return m[:21] + "..."
+}
+
+// truncateHost keeps the status line narrow for custom providers.
+func truncateHost(h string) string {
+	if len(h) <= 32 {
+		return h
+	}
+	return h[:29] + "..."
 }
 
 // renderRetry picks a colour by retry state so the operator can read the

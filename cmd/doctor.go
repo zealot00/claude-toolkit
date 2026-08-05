@@ -84,6 +84,7 @@ func doctorCmd(args []string) int {
 	checkCwdEnvFallback(rp, dir)
 	checkPlugin(rp, dir)
 	checkDependencies(rp, dir)
+	checkProfiles(rp)
 
 	fmt.Printf("claude-toolkit %s  (%s/%s, go %s)\n\n", Version, runtime.GOOS, runtime.GOARCH, runtime.Version())
 

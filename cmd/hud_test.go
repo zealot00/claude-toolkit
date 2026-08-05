@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/zealot00/claude-toolkit/internal/hudstate"
+	"github.com/zealot00/claude-toolkit/internal/profiles"
 	"github.com/zealot00/claude-toolkit/internal/tokenusage"
 	"github.com/zealot00/claude-toolkit/pkg/dir"
 )
@@ -23,7 +24,7 @@ func TestRenderHUD_AllFieldsPresent(t *testing.T) {
 	summary := tokenusage.Summary{
 		Input: 30000, CacheRead: 10000, CacheCreation: 0, Output: 2000, Total: 42000,
 	}
-	out := renderHUD(hud, summary, true)
+	out := renderHUD(hud, summary, true, nil)
 	want := []string{
 		"30k",  // input
 		"10k",  // cached
@@ -42,7 +43,7 @@ func TestRenderHUD_AllFieldsPresent(t *testing.T) {
 }
 
 func TestRenderHUD_NoHudStateShowsOnlyTokens(t *testing.T) {
-	out := renderHUD(hudstate.State{}, tokenusage.Summary{Total: 1500}, true)
+	out := renderHUD(hudstate.State{}, tokenusage.Summary{Total: 1500}, true, nil)
 	if !strings.Contains(out, "[tok 1.5k") {
 		t.Errorf("expected token segment, got %q", out)
 	}
@@ -60,7 +61,7 @@ func TestRenderHUD_NoHudStateShowsOnlyTokens(t *testing.T) {
 }
 
 func TestRenderHUD_NoTranscriptPathShowsDashDash(t *testing.T) {
-	out := renderHUD(hudstate.State{Mode: "default"}, tokenusage.Summary{}, false)
+	out := renderHUD(hudstate.State{Mode: "default"}, tokenusage.Summary{}, false, nil)
 	if !strings.Contains(out, "[tok --]") {
 		t.Errorf("expected [tok --] placeholder, got %q", out)
 	}
@@ -70,7 +71,7 @@ func TestRenderHUD_NoTranscriptPathShowsDashDash(t *testing.T) {
 }
 
 func TestRenderHUD_EmptySummaryShowsZero(t *testing.T) {
-	out := renderHUD(hudstate.State{}, tokenusage.Summary{}, true)
+	out := renderHUD(hudstate.State{}, tokenusage.Summary{}, true, nil)
 	if !strings.Contains(out, "[tok 0]") {
 		t.Errorf("expected [tok 0] for fresh transcript, got %q", out)
 	}
@@ -178,7 +179,7 @@ func TestHudCmd_WritesRenderedLineToStdout(t *testing.T) {
 	transcriptPath := readTranscriptPath(stdin)
 	hud, _ := hudstate.Load()
 	summary := tokenusage.Summarize(transcriptPath)
-	stdout.WriteString(renderHUD(hud, summary, transcriptPath != "") + "\n")
+	stdout.WriteString(renderHUD(hud, summary, transcriptPath != "", nil) + "\n")
 
 	if !strings.Contains(stdout.String(), "[tok ") {
 		t.Errorf("expected token segment, got %s", stdout.String())
@@ -191,5 +192,47 @@ func TestHudCmd_WritesRenderedLineToStdout(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "bypassPermissions") {
 		t.Errorf("expected mode bypassPermissions, got %s", stdout.String())
+	}
+}
+
+func TestRenderModel_Segments(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv(dir.EnvHome, root)
+	t.Setenv("HOME", root) // settingsEnvBaseURL reads user-scope settings via os.UserHomeDir
+	// No ANTHROPIC_BASE_URL: no segment at all.
+	if out := renderHUD(hudstate.State{}, tokenusage.Summary{}, true, nil); out != "" && strings.Contains(out, "custom") {
+		t.Errorf("no env should not render a model segment, got %q", out)
+	}
+	// Custom env (no matching profile): yellow segment with host.
+	writeSettingsEnv(t, root, "https://api.deepseek.com/v1")
+	st, err := profiles.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := renderHUD(hudstate.State{}, tokenusage.Summary{}, true, st)
+	if !strings.Contains(out, "custom api.deepseek.com") {
+		t.Errorf("expected custom-provider segment, got %q", out)
+	}
+	// Matching profile: green segment with profile name.
+	st.Profiles["ds"] = profiles.Profile{"ANTHROPIC_BASE_URL": "https://api.deepseek.com/v1", "ANTHROPIC_MODEL": "deepseek-chat"}
+	if err := st.Save(); err != nil {
+		t.Fatal(err)
+	}
+	st2, _ := profiles.Load()
+	out = renderHUD(hudstate.State{}, tokenusage.Summary{}, true, st2)
+	if !strings.Contains(out, "● ds deepseek-chat") {
+		t.Errorf("expected active profile segment, got %q", out)
+	}
+}
+
+func writeSettingsEnv(t *testing.T, root, baseURL string) {
+	t.Helper()
+	path := filepath.Join(root, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data := []byte(`{"env":{"ANTHROPIC_BASE_URL":"` + baseURL + `","ANTHROPIC_AUTH_TOKEN":"sk-test"}}`)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
 	}
 }

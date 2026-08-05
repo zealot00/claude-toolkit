@@ -538,3 +538,46 @@ func sortedKeys(m map[string]bool) []string {
 	sort.Strings(out)
 	return out
 }
+
+// ApplyEnv returns a Plan that updates the settings file's "env" block:
+// removeKeys are deleted first, then set is merged in. It mirrors BuildPlan's
+// structure (read → decode → mutate → encode → Plan with backup) so model
+// profile switching gets the same atomic write + backup guarantees as hooks.
+//
+// The caller supplies removeKeys and set: the installer does not know what
+// env keys belong to which feature.
+func ApplyEnv(path string, removeKeys []string, set map[string]string) (*Plan, error) {
+	before, mode, err := read(path)
+	if err != nil {
+		return nil, err
+	}
+	root, err := decode(before, path)
+	if err != nil {
+		return nil, err
+	}
+	env, err := childObject(root, "env", path)
+	if err != nil {
+		return nil, err
+	}
+	for _, k := range removeKeys {
+		delete(env, k)
+	}
+	for k, v := range set {
+		env[k] = v
+	}
+	if len(env) == 0 {
+		delete(root, "env")
+	} else {
+		root["env"] = env
+	}
+
+	after, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("installer: encode settings: %w", err)
+	}
+	p := &Plan{Path: path, Before: before, After: append(after, '\n'), Mode: mode}
+	if len(before) > 0 && p.Changed() {
+		p.BackupPath = fmt.Sprintf("%s.bak.%s", path, time.Now().Format("20060102-150405"))
+	}
+	return p, nil
+}
