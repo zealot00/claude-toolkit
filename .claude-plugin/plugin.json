@@ -1,7 +1,7 @@
 {
   "name": "claude-toolkit",
-  "version": "0.1.0",
-  "description": "Manage claude-toolkit hook capabilities (guard, loopguard, format, heal, enrich, notify, envfix) from inside Claude Code",
+  "version": "0.3.1",
+  "description": "Manage claude-toolkit hook capabilities (guard, loopguard, format, heal, enrich, notify, envfix, autoproxy, retryguard) and provider profiles for multi-model switching from inside Claude Code",
   "author": {
     "name": "zealot00"
   },
@@ -13,6 +13,9 @@
     "hooks",
     "guardrails",
     "security",
-    "management"
+    "management",
+    "profiles",
+    "model-switching",
+    "multi-model"
   ]
 }
