@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -112,5 +113,24 @@ func TestUninstallCmdRemovesHooks(t *testing.T) {
 	}
 	if strings.Contains(string(data), "claude-toolkit") {
 		t.Error("settings still contains claude-toolkit entries after uninstall")
+	}
+}
+
+// TestUsageListsAllCommands pins the --help output: every subcommand the
+// switch in Execute can dispatch must be discoverable from usage(). A
+// command omitted here is invisible to `claude-toolkit --help`, and agents
+// (including Claude Code via /toolkit) then conclude it does not exist.
+func TestUsageListsAllCommands(t *testing.T) {
+	var buf bytes.Buffer
+	usage(&buf)
+	out := buf.String()
+	want := []string{
+		"init", "manage", "model", "test", "ast", "rules", "proxy",
+		"upgrade", "uninstall", "log", "doctor", "hud", "run", "version",
+	}
+	for _, w := range want {
+		if !strings.Contains(out, "  "+w) {
+			t.Errorf("usage() missing %q command entry\nfull output:\n%s", w, out)
+		}
 	}
 }
