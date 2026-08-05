@@ -38,8 +38,24 @@ more events; each has its own `manage` switch):
 
 ## What to do
 
-When this command is invoked, manage the toolkit's capabilities by running the
-toolkit's own CLI. Do **not** edit `~/.claude/settings.json` by hand.
+First check what the user's argument is, then dispatch to the matching
+section below. Never edit `~/.claude/settings.json` by hand.
+
+### Argument starts with `model` — provider / model switching
+
+Follow the [Model profiles](#model-profiles-provider-switching) section
+below. Do **not** run `claude-toolkit manage` — model commands are separate
+subcommands of the toolkit binary, not capabilities. Accepted forms:
+
+- `model` (bare) → run `claude-toolkit model list`
+- `model list` → `claude-toolkit model list`
+- `model use <name>` → `claude-toolkit model use <name>`
+- `model add ...` → `claude-toolkit model add <args>`
+- `model rm <name>` → `claude-toolkit model rm <name>`
+
+### Otherwise — hook capability management
+
+Manage the toolkit's capabilities by running the toolkit's own CLI.
 
 1. **Show current state.** Run:
    ```sh
@@ -99,8 +115,10 @@ block — never edit settings.json by hand.
 ## Rules
 
 - Use the command-line forms above. Never rewrite the settings file yourself.
-- If the user asks for something the toolkit does not support (an unknown
-  capability name), report the valid names from the table above.
+- If the user asks for something the toolkit does not support — an unknown
+  capability name or an unrecognized `model` subcommand — report the valid
+  names: capabilities from the table above, and `model` subcommands `list`,
+  `use`, `add`, `rm`.
 - If the user just asks "what is claude-toolkit" or "what hooks do I have",
   `claude-toolkit manage list` is the answer.
 
