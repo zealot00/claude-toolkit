@@ -90,13 +90,16 @@ func activeProfileName(st *profiles.Store) string {
 // settingsEnvBaseURL reads ANTHROPIC_BASE_URL from the user-scope settings
 // env (project-scope overrides are a per-project concern, reported separately
 // by doctor). An unreadable/missing file yields "".
-func settingsEnvBaseURL() string {
+func settingsEnv() map[string]string {
 	path, err := installer.Path(installer.ScopeUser, "")
 	if err != nil {
-		return ""
+		return nil
 	}
-	env := readEnvBlock(path)
-	return env["ANTHROPIC_BASE_URL"]
+	return readEnvBlock(path)
+}
+
+func settingsEnvBaseURL() string {
+	return settingsEnv()["ANTHROPIC_BASE_URL"]
 }
 
 // readEnvBlock parses the env object out of a settings file, "" on any error.
@@ -129,6 +132,20 @@ func modelList() int {
 		return 1
 	}
 	if len(st.Profiles) == 0 {
+		env := settingsEnv()
+		if base := env["ANTHROPIC_BASE_URL"]; base != "" {
+			// A provider is already configured in settings.json env, just not
+			// saved as a profile. Show it so "list" never reads as "nothing is
+			// configured" for a user who hand-edited their env.
+			fmt.Println("No stored profiles yet. Current settings.json env is configured for:")
+			fmt.Printf("  provider  %s\n", hostOf(base))
+			if m := env["ANTHROPIC_MODEL"]; m != "" {
+				fmt.Printf("  model     %s\n", m)
+			}
+			fmt.Println("Save it as a profile to switch providers:")
+			fmt.Println("  claude-toolkit model add --name <n> --base-url <url> --token <token> --model <m>")
+			return 0
+		}
 		fmt.Println("No profiles yet. Add one with `claude-toolkit model add`.")
 		return 0
 	}

@@ -206,3 +206,56 @@ func TestSettingsJSONValidAfterUse(t *testing.T) {
 		t.Fatalf("settings.json invalid after use: %v\n%s", err, raw)
 	}
 }
+
+// TestModelListEmptyStoreShowsCurrentEnv: with no stored profiles but a
+// provider already configured in settings env, list must show it (and guide
+// the user to save it) instead of claiming "No profiles yet".
+func TestModelListEmptyStoreShowsCurrentEnv(t *testing.T) {
+	root := modelEnv(t)
+	writeSettingsEnv(t, root, "https://api.minimaxi.com/anthropic")
+	// add a model key so the output includes it
+	path := filepath.Join(root, ".claude", "settings.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	m["env"].(map[string]any)["ANTHROPIC_MODEL"] = "MiniMax-M3"
+	out, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(out, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, code := runModel(t, "list")
+	if code != 0 {
+		t.Fatalf("list failed: %d", code)
+	}
+	if !strings.Contains(got, "api.minimaxi.com") || !strings.Contains(got, "MiniMax-M3") {
+		t.Errorf("list should show the configured provider, got %s", got)
+	}
+	if strings.Contains(got, "No profiles yet. Add one") {
+		t.Errorf("must not claim nothing is configured, got %s", got)
+	}
+	if !strings.Contains(got, "model add --name") {
+		t.Errorf("should suggest saving as a profile, got %s", got)
+	}
+}
+
+// TestModelListEmptyStoreNoEnv: no profiles and no env config keeps the
+// original guidance.
+func TestModelListEmptyStoreNoEnv(t *testing.T) {
+	modelEnv(t)
+	got, code := runModel(t, "list")
+	if code != 0 {
+		t.Fatal(code)
+	}
+	if !strings.Contains(got, "No profiles yet") {
+		t.Errorf("expected empty-state guidance, got %s", got)
+	}
+}
